@@ -22,7 +22,8 @@ type StatusFilter = "all" | DnaStatus;
 
 type Props = {
   manualEntries: DnaEntry[];
-  setManualEntries: Dispatch<SetStateAction<DnaEntry[]>>;
+  setManualEntries: (entries: DnaEntry[] | ((prev: DnaEntry[]) => DnaEntry[])) => void;
+  dnaStoragePath: string;
 };
 
 type PersistedManagerState = {
@@ -140,7 +141,7 @@ function useAnimatedNumber(target: number, durationMs = 420): number {
   return value;
 }
 
-export function DnaManagementView({ manualEntries, setManualEntries }: Props) {
+export function DnaManagementView({ manualEntries, setManualEntries, dnaStoragePath }: Props) {
   const defaultCategory = getSortedCategoryKeys()[0] ?? "truyen_ma";
   const persisted = readJsonStorage<PersistedManagerState | null>("manager.state", null);
 
@@ -427,7 +428,7 @@ export function DnaManagementView({ manualEntries, setManualEntries }: Props) {
 
   const openSelectedDnaPath = async () => {
     if (!selectedEntry) return;
-    const dnaDirectory = resolveDnaDirectoryFromSourceFile(selectedEntry.source_file);
+    const dnaDirectory = resolveDnaDirectoryFromSourceFile(selectedEntry.source_file, dnaStoragePath);
     if (!dnaDirectory) {
       if (typeof window !== "undefined") window.alert("Không có đường dẫn DNA để mở.");
       return;
@@ -445,7 +446,7 @@ export function DnaManagementView({ manualEntries, setManualEntries }: Props) {
     if (!selectedEntry) return;
 
     try {
-      const bundle = loadDnaBundleFromSourceFile(selectedEntry.source_file);
+      const bundle = loadDnaBundleFromSourceFile(selectedEntry.source_file, dnaStoragePath);
       const combined = bundle.files
         .map((file) => `=== ${file.filename} ===\nPath: ${file.absolutePath}\n\n${file.content}`)
         .join("\n\n");

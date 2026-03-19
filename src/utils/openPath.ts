@@ -43,12 +43,17 @@ export function canOpenLocalPath(): boolean {
   return getPathRuntime() !== null;
 }
 
-export function resolveDnaDirectoryFromSourceFile(sourceFile: string): string | null {
+export function resolveDnaDirectoryFromSourceFile(sourceFile: string, storageDir?: string): string | null {
   const runtime = getPathRuntime();
   if (!runtime) return null;
   if (!sourceFile.trim()) return null;
 
-  const indexDir = runtime.path.join(runtime.os.homedir(), "Documents", "DNA_Library", "dna_index");
+  const rawBase = String(storageDir ?? "").trim();
+  const baseDir = rawBase 
+    ? (runtime.path.isAbsolute(rawBase) ? rawBase : runtime.path.join(runtime.os.homedir(), rawBase))
+    : runtime.path.join(runtime.os.homedir(), "Documents", "DNA_Library");
+
+  const indexDir = runtime.path.join(baseDir, "dna_index");
   const absoluteSource = runtime.path.isAbsolute(sourceFile) ? sourceFile : runtime.path.join(indexDir, sourceFile);
   return runtime.path.dirname(absoluteSource);
 }

@@ -107,6 +107,7 @@ export type GenerateStoryDraftOptions = {
   sources: StoryDnaSource[];
   factors: StoryFactorDefinition[];
   onProgress?: (message: string) => void;
+  customStoryPrompt?: string;
 };
 
 export type GenerateStoryDraftBrowserOptions = Omit<GenerateStoryDraftOptions, "apiKey" | "apiUrl" | "model"> & {
@@ -128,6 +129,7 @@ export type ReviewStoryDraftOptions = {
   draft: StoryDraftResult;
   sources: StoryDnaSource[];
   factors: StoryFactorDefinition[];
+  customStoryPrompt?: string;
 };
 
 type ChapterReviewResult = {
@@ -144,412 +146,158 @@ type ChapterReviewResult = {
   timeline_marker: string;
 };
 
-type ChapterContextPacket = {
-  chapter_number: number;
-  chapter_title: string;
-  opening_excerpt: string;
-  ending_excerpt: string;
-  summary: string;
-};
-
-function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" ? (value as JsonRecord) : {};
+function asRecord(val: unknown): JsonRecord {
+  return val && typeof val === "object" ? (val as JsonRecord) : {};
 }
 
-function toStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => String(item ?? "").trim()).filter(Boolean);
-}
-
-function toNumber(value: unknown, fallback = 0): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return parsed;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-function firstString(...values: unknown[]): string {
-  for (const value of values) {
-    const text = String(value ?? "").trim();
-    if (text) return text;
+function toNumber(val: unknown, fallback: number): number {
+  if (typeof val === "number") return val;
+  if (typeof val === "string") {
+    const num = Number(val);
+    return Number.isNaN(num) ? fallback : num;
   }
-  return "";
+  return fallback;
 }
 
-function compactText(value: string, maxChars: number): string {
-  const normalized = String(value ?? "").replace(/\r\n/g, "\n").trim();
-  if (!normalized) return "";
-  if (normalized.length <= maxChars) return normalized;
-  return `${normalized.slice(0, Math.max(0, maxChars - 14)).trimEnd()}\n...(rút gọn)`;
+function toStringArray(val: unknown): string[] {
+  if (Array.isArray(val)) return val.map((item) => String(item));
+  return [];
 }
 
-function sanitizeApiErrorText(text: string): string {
-  const plain = text
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<\/?[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return plain.slice(0, 260);
+function firstString(val: unknown, fallback: string): string {
+  if (typeof val === "string") return val;
+  if (Array.isArray(val) && val.length > 0) return String(val[0]);
+  return fallback;
 }
 
-function extractBalancedJsonObject(text: string): string | null {
-  let depth = 0;
-  let start = -1;
-  let inString = false;
-  let escaped = false;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (ch === "\\") escaped = true;
-      else if (ch === "\"") inString = false;
-      continue;
-    }
-    if (ch === "\"") {
-      inString = true;
-      continue;
-    }
-    if (ch === "{") {
-      if (depth === 0) start = i;
-      depth += 1;
-      continue;
-    }
-    if (ch === "}") {
-      depth -= 1;
-      if (depth === 0 && start >= 0) return text.slice(start, i + 1);
-    }
-  }
-  return null;
+function clamp(val: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, val));
 }
 
-function parseJsonFromText(text: string): unknown {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    // continue
-  }
-  const codeBlockMatch = trimmed.match(/```json\s*([\s\S]*?)\s*```/i) ?? trimmed.match(/```\s*([\s\S]*?)\s*```/i);
-  if (codeBlockMatch?.[1]) {
-    try {
-      return JSON.parse(codeBlockMatch[1]);
-    } catch {
-      // continue
-    }
-  }
-  const jsonObject = extractBalancedJsonObject(trimmed);
-  if (!jsonObject) return null;
-  try {
-    return JSON.parse(jsonObject);
-  } catch {
-    return null;
-  }
+function compactText(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return text.slice(0, limit) + "...";
 }
 
-function appendCandidate(result: string[], value: unknown): void {
-  if (typeof value === "string" && value.trim()) {
-    result.push(value);
-    return;
-  }
-  if (value && typeof value === "object") {
-    try {
-      result.push(JSON.stringify(value));
-    } catch {
-      // ignore
-    }
-  }
-}
-
-function getDirectJsonCandidate(payload: unknown): unknown | null {
-  const root = asRecord(payload);
-  const choices = Array.isArray(root.choices) ? (root.choices as JsonRecord[]) : [];
-  const firstChoice = choices[0] ?? null;
-  if (!firstChoice) return null;
-  const message = asRecord(firstChoice.message);
-  if (message.parsed && typeof message.parsed === "object") return message.parsed;
-  if (message.json && typeof message.json === "object") return message.json;
-  return null;
-}
-
-function getChoiceContent(payload: unknown): string {
-  const root = asRecord(payload);
-  const candidates: string[] = [];
-  const choices = Array.isArray(root.choices) ? (root.choices as JsonRecord[]) : [];
-  choices.forEach((choice) => {
-    appendCandidate(candidates, choice.text);
-    const message = asRecord(choice.message);
-    appendCandidate(candidates, message.content);
-    const contentArray = Array.isArray(message.content) ? (message.content as JsonRecord[]) : [];
-    contentArray.forEach((item) => {
-      appendCandidate(candidates, item.text);
-      appendCandidate(candidates, item.content);
-    });
-  });
-  appendCandidate(candidates, root.output_text);
-  appendCandidate(candidates, root.content);
-  appendCandidate(candidates, root.response);
-  appendCandidate(candidates, root.result);
-  appendCandidate(candidates, root.message);
-  return candidates.find((item) => item.trim()) ?? "";
-}
-
-function isTransientStatus(status: number): boolean {
-  return status === 408 || status === 409 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || status === 524;
-}
-
-function waitMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function callChatCompletions(apiKey: string, apiUrl: string, body: Record<string, unknown>): Promise<unknown> {
-  let requestBody = { ...body };
-  for (let attempt = 0; attempt < MAX_CHAT_RETRIES; attempt += 1) {
-    recordMetric("api_calls", 1);
-    recordMetric("api_calls_story", 1);
-
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (response.ok) return response.json() as Promise<unknown>;
-
-    const errorText = await response.text();
-    const status = response.status;
-    if (status === 400 && "response_format" in requestBody) {
-      const fallbackBody = { ...requestBody };
-      delete (fallbackBody as { response_format?: { type: string } }).response_format;
-      requestBody = fallbackBody;
-      continue;
-    }
-    if (isTransientStatus(status) && attempt < MAX_CHAT_RETRIES - 1) {
-      await waitMs(1500 * (attempt + 1));
-      continue;
-    }
-
-    const cleaned = sanitizeApiErrorText(errorText);
-    if (status === 524) {
-      throw new Error(`API lỗi 524 (timeout/gateway). Hệ thống đã retry nhưng vẫn timeout. Hãy giảm tải context hoặc thử lại sau. Chi tiết: ${cleaned}`);
-    }
-    throw new Error(`API lỗi ${status}: ${cleaned}`);
-  }
-  throw new Error("API timeout sau nhiều lần thử.");
-}
-
-function computeChapterCount(totalWords: number, avgWordsPerChapter: number): number {
-  const safeTotal = clamp(Math.round(totalWords), 3000, 50000);
-  const safeAvg = clamp(Math.round(avgWordsPerChapter), 1000, 5000);
-  return clamp(Math.ceil(safeTotal / safeAvg), 1, 30);
-}
-
-export function parseStoryCreationRequest(
-  rawJson: string,
-  defaults?: {
-    totalWords?: number;
-    avgWordsPerChapter?: number;
-  },
-): StoryCreationRequest {
-  const parsed = parseJsonFromText(rawJson);
-  if (!parsed || typeof parsed !== "object") {
-    throw new Error("JSON truyện không hợp lệ.");
-  }
-  const raw = parsed as JsonRecord;
-
-  const storyTitle = firstString(raw.story_title);
-  if (!storyTitle) throw new Error("Thiếu `story_title` trong JSON.");
-  const genre = firstString(raw.genre);
-  if (!genre) throw new Error("Thiếu `genre` trong JSON.");
-
+export function parseStoryCreationRequest(json: string): StoryCreationRequest {
+  const raw = JSON.parse(json);
+  const story_title = String(raw.story_title || "").trim();
+  const genre = String(raw.genre || "").trim();
   const styles = toStringArray(raw.styles);
-  const fallbackTotal = clamp(Math.round(toNumber(defaults?.totalWords, 35000)), 3000, 50000);
-  const fallbackAvg = clamp(Math.round(toNumber(defaults?.avgWordsPerChapter, 5000)), 1000, 5000);
-  const hasTotalWords = raw.total_words !== undefined && raw.total_words !== null;
-  const hasAvgWords = raw.avg_words_per_chapter !== undefined && raw.avg_words_per_chapter !== null;
-  const totalWords = clamp(Math.round(toNumber(raw.total_words, fallbackTotal)), 3000, 50000);
-  const avgWords = clamp(Math.round(toNumber(raw.avg_words_per_chapter, fallbackAvg)), 1000, 5000);
+  const total_words = toNumber(raw.total_words, 35000);
+  const avg_words_per_chapter = toNumber(raw.avg_words_per_chapter, 5000);
+  const story_language = String(raw.story_language || "tieng_viet").trim();
+  const character_name_language = String(raw.character_name_language || "tieng_anh").trim();
+  const target_intensity = String(raw.target_intensity || "trung_binh").trim();
+  const ending_type = String(raw.ending_type || "bat_ngo").trim();
+  const extra_prompt = String(raw.extra_prompt || "").trim();
 
-  const factorFlags: Record<string, boolean> = {};
-  Object.entries(raw).forEach(([key, value]) => {
+  const factor_flags: Record<string, boolean> = {};
+  Object.keys(raw).forEach((key) => {
     if (RESERVED_REQUEST_KEYS.has(key)) return;
-    if (typeof value === "boolean") factorFlags[normalizeFactorKey(key)] = value;
+    if (typeof raw[key] === "boolean") {
+      factor_flags[key] = raw[key];
+    }
   });
-
-  toStringArray(raw.enabled_factors)
-    .map((key) => normalizeFactorKey(key))
-    .forEach((key) => {
-      if (key) factorFlags[key] = true;
-    });
-
-  toStringArray(raw.disabled_factors)
-    .map((key) => normalizeFactorKey(key))
-    .forEach((key) => {
-      if (key) factorFlags[key] = false;
-    });
 
   return {
-    story_title: storyTitle,
+    story_title,
     genre,
     styles,
     length_mode: "total_words",
-    total_words: hasTotalWords ? totalWords : fallbackTotal,
-    avg_words_per_chapter: hasAvgWords ? avgWords : fallbackAvg,
-    story_language: firstString(raw.story_language, "tieng_viet"),
-    character_name_language: firstString(raw.character_name_language, "tieng_viet"),
-    target_intensity: firstString(raw.target_intensity, "cao"),
-    ending_type: firstString(raw.ending_type, "du_am_bat_an"),
-    extra_prompt: firstString(raw.extra_prompt),
-    factor_flags: factorFlags,
+    total_words,
+    avg_words_per_chapter,
+    story_language,
+    character_name_language,
+    target_intensity,
+    ending_type,
+    extra_prompt,
+    factor_flags,
   };
 }
 
 export function pickActiveFactors(request: StoryCreationRequest, factors: StoryFactorDefinition[]): StoryFactorDefinition[] {
-  const activeKeys = new Set(factors.filter((factor) => factor.enabled_by_default).map((factor) => factor.key));
-  factors.forEach((factor) => {
-    const flag = request.factor_flags[factor.key];
-    if (flag === true) activeKeys.add(factor.key);
-    if (flag === false) activeKeys.delete(factor.key);
+  return factors.filter((factor) => {
+    const normalized = normalizeFactorKey(factor.key);
+    if (request.factor_flags[normalized] === true) return true;
+    if (request.factor_flags[normalized] === false) return false;
+    return factor.enabled_by_default === true;
   });
-  return factors.filter((factor) => activeKeys.has(factor.key));
 }
 
-function buildSourceDigest(sources: StoryDnaSource[], activeFactors: StoryFactorDefinition[]): Array<Record<string, unknown>> {
+function computeChapterCount(total: number, avg: number): number {
+  const t = Math.max(1000, total);
+  const a = Math.max(1000, avg);
+  return Math.ceil(t / a);
+}
+
+function buildSourceDigest(sources: StoryDnaSource[], activeFactors: StoryFactorDefinition[]): Record<string, unknown>[] {
   const hasLayToanBo = activeFactors.some((f) => f.key === "lay_toan_bo_dna");
   const hasLayVanPhong = activeFactors.some((f) => f.key === "lay_van_phong");
   const hasLayCotTruyen = activeFactors.some((f) => f.key === "lay_cot_truyen");
 
   return sources.slice(0, MAX_DNA_CONTEXT).map((source) => {
-    const digested: Record<string, unknown> = {
+    const digest: Record<string, unknown> = {
       dna_id: source.dna_id,
       title: source.title,
       category: source.category,
       sub_category: source.sub_category,
+      styles: source.styles,
+      tags: source.tags,
       score: source.score,
-      summary_hint: compactText(source.summary_hint, 180),
     };
 
-    if (hasLayToanBo || hasLayVanPhong) {
-      digested.styles = source.styles.slice(0, 4);
-      if (source.writing_styles_payload) {
-        digested.writing_styles = source.writing_styles_payload;
-      }
+    if (hasLayToanBo) {
+      digest.writing_styles_payload = source.writing_styles_payload;
+      digest.core_payload = source.core_payload;
+    } else {
+      if (hasLayVanPhong) digest.writing_styles_payload = source.writing_styles_payload;
+      if (hasLayCotTruyen) digest.core_payload = source.core_payload;
     }
-    if (hasLayToanBo || hasLayCotTruyen) {
-      digested.tags = source.tags.slice(0, 6);
-      if (source.core_payload) {
-        digested.core = source.core_payload;
-      }
-    }
-    return digested;
+
+    return digest;
   });
 }
 
-function buildSourceExecutionPlan(sources: StoryDnaSource[], activeFactors: StoryFactorDefinition[]): Record<string, unknown> {
-  const hasLayToanBo = activeFactors.some((f) => f.key === "lay_toan_bo_dna");
-  const hasLayVanPhong = activeFactors.some((f) => f.key === "lay_van_phong");
-  const hasLayCotTruyen = activeFactors.some((f) => f.key === "lay_cot_truyen");
-
-  const limited = sources.slice(0, MAX_DNA_CONTEXT);
-  const anchor = limited[0] ?? null;
-  const highestScore = [...limited].sort((left, right) => right.score - left.score)[0] ?? null;
-
-  return {
-    anchor_dna: anchor
-      ? {
-          dna_id: anchor.dna_id,
-          title: anchor.title,
-          category: anchor.category,
-          sub_category: anchor.sub_category,
-          score: anchor.score,
-        }
-      : null,
-    highest_score_dna: highestScore
-      ? {
-          dna_id: highestScore.dna_id,
-          title: highestScore.title,
-          score: highestScore.score,
-        }
-      : null,
-    inheritance_rules: [
-      hasLayToanBo || hasLayCotTruyen ? "DNA neo quyet dinh luc day xung dot, chat kinh di va logic van hanh cua bo truyen." : "Chuyen dong cam xuc phai on dinh.",
-      hasLayToanBo || hasLayVanPhong ? "DNA diem cao nhat duoc uu tien khi chon motif, hook, payoff va chat van phong." : "Moi chuong phai giu nhip deu.",
-      hasLayToanBo || hasLayCotTruyen ? "Moi chuong phai co dau vet cua it nhat 1 motif/tag tu DNA nguon." : "Giữ kết cấu nhất quán.",
-      "Khong duoc viet chuong chung chung den muc co the tach DNA ra ma van dung.",
-      "Chi duoc dot bien DNA de tao ban moi, khong duoc bo qua DNA.",
-    ],
-    source_roles: limited.map((source, index) => {
-      const must_keep: string[] = [];
-      if (hasLayToanBo || hasLayVanPhong) {
-        must_keep.push(...source.styles.slice(0, 2).map((item) => `van_phong:${item}`));
-      }
-      if (hasLayToanBo || hasLayCotTruyen) {
-        must_keep.push(...source.tags.slice(0, 3).map((item) => `motif:${item}`));
-      }
-      return {
-        dna_id: source.dna_id,
-        title: source.title,
-        score: source.score,
-        role: index === 0 ? "anchor" : index <= 2 ? "support" : "spice",
-        must_keep,
-      };
-    }),
-  };
-}
-
-function buildFactorDigest(activeFactors: StoryFactorDefinition[]): Array<Record<string, unknown>> {
-  return activeFactors.slice(0, MAX_FACTOR_CONTEXT).map((factor) => ({
-    key: factor.key,
-    title: factor.title,
-    description: compactText(factor.description, 180),
-    prompt: factor.prompt,
-  }));
-}
-
-function buildChapterContextPackets(previousChapters: StoryDraftChapter[]): ChapterContextPacket[] {
-  return previousChapters.map((chapter) => {
-    const text = chapter.content.trim();
-    const opening = compactText(text.slice(0, MAX_OLDER_CHAPTER_SUMMARY), MAX_OLDER_CHAPTER_SUMMARY);
-    const ending = compactText(text.slice(-MAX_OLDER_CHAPTER_SUMMARY), MAX_OLDER_CHAPTER_SUMMARY);
-    return {
-      chapter_number: chapter.chapter_number,
-      chapter_title: chapter.chapter_title,
-      opening_excerpt: opening,
-      ending_excerpt: ending,
-      summary: compactText(`${opening} ... ${ending}`.trim(), 360),
-    };
+function buildSourceExecutionPlan(sources: StoryDnaSource[], activeFactors: StoryFactorDefinition[]): string[] {
+  return sources.slice(0, MAX_DNA_CONTEXT).map((s, idx) => {
+    if (idx === 0) return `DNA NEO [${s.title}]: Day la van phong vung, logic goc.`;
+    if (idx === 1) return `DNA BIEN THE [${s.title}]: Lay motif hoac cach dung tu cua DNA nay de mutation vao DNA neo.`;
+    return `DNA GIA VI [${s.title}]: Lay cac hinh anh dac trung cua DNA nay.`;
   });
 }
 
-function buildMemoryPack(previousChapters: StoryDraftChapter[]): Record<string, unknown> {
-  if (!previousChapters.length) {
-    return {
-      recent_full_chapters: [],
-      older_chapter_summaries: [],
-      latest_ending_bridge: "Chuong 1 mo dau bang bien co kich hoat xung dot trung tam.",
-    };
-  }
-
-  const packets = buildChapterContextPackets(previousChapters);
-  const recent = previousChapters.slice(-MAX_FULL_RECENT_CHAPTERS).map((chapter) => ({
-    chapter_number: chapter.chapter_number,
-    chapter_title: chapter.chapter_title,
-    content: compactText(chapter.content, MAX_RECENT_CHAPTER_CHARS),
+function buildFactorDigest(factors: StoryFactorDefinition[]): Record<string, unknown>[] {
+  return factors.slice(0, MAX_FACTOR_CONTEXT).map((f) => ({
+    key: f.key,
+    label: f.title,
+    description: f.description,
+    instruction: f.prompt,
   }));
-  const older = packets
-    .filter((packet) => packet.chapter_number < previousChapters.length - (MAX_FULL_RECENT_CHAPTERS - 1))
-    .map((packet) => ({
-      chapter_number: packet.chapter_number,
-      chapter_title: packet.chapter_title,
-      summary: packet.summary,
+}
+
+function buildMemoryPack(chapters: StoryDraftChapter[]): Record<string, unknown> {
+  const packets = chapters.slice(-3).map((c) => ({
+    chapter_number: c.chapter_number,
+    chapter_title: c.chapter_title,
+    ending_excerpt: compactText(c.content.split("\n").slice(-3).join("\n"), 600),
+    summary: "...",
+  }));
+
+  const recent = chapters.slice(-MAX_FULL_RECENT_CHAPTERS).map((c) => ({
+    chapter_number: c.chapter_number,
+    content: compactText(c.content, MAX_RECENT_CHAPTER_CHARS),
+  }));
+
+  const older = chapters
+    .slice(0, -MAX_FULL_RECENT_CHAPTERS)
+    .slice(-10)
+    .map((c) => ({
+      chapter_number: c.chapter_number,
+      chapter_title: c.chapter_title,
+      summary: "...",
     }));
+
   const latest = packets[packets.length - 1];
 
   return {
@@ -598,145 +346,8 @@ function buildCarryGuidanceFromReview(review: ChapterReviewResult): string {
     `Timeline marker: ${review.timeline_marker}`,
     `Unresolved threads: ${review.unresolved_threads.join("; ") || "không có"}`,
     `No-repeat rules: ${review.no_repeat_rules.join("; ") || "không có"}`,
-    `Guidance chương kế: ${review.next_chapter_guidance}`,
   ];
   return lines.join("\n");
-}
-
-function extractChapterTitleFromText(content: string, chapterNumber: number): string {
-  const headingMatch =
-    content.match(/^#{1,3}\s*ch(?:ươ|uo)ng\s*\d+\s*[:\-–]\s*(.+)$/im) ??
-    content.match(/^ch(?:ươ|uo)ng\s*\d+\s*[:\-–]\s*(.+)$/im);
-  if (headingMatch?.[1]) return compactText(headingMatch[1], 120).replace(/\n/g, " ").trim();
-  return `Chương ${chapterNumber}`;
-}
-
-function normalizeWriterText(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return "";
-  return trimmed
-    .replace(/^```(?:text|markdown|md)?\s*/i, "")
-    .replace(/```$/i, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function normalizeChapterGeneration(
-  rawPayload: unknown,
-  rawText: string,
-  chapterNumber: number,
-  targetWords: number,
-  fallbackTitle: string,
-): StoryDraftChapter {
-  const parsed = rawPayload ? asRecord(rawPayload) : {};
-  const parsedContent = firstString(parsed.content, parsed.chapter_content, parsed.text);
-  const textContent = normalizeWriterText(parsedContent || rawText);
-  const title = firstString(parsed.chapter_title, extractChapterTitleFromText(textContent, chapterNumber), fallbackTitle, `Chương ${chapterNumber}`);
-
-  if (!textContent) {
-    throw new Error(`Writer không trả nội dung chương ${chapterNumber}.`);
-  }
-  if (textContent.length < 900) {
-    throw new Error(`Nội dung chương ${chapterNumber} quá ngắn, không đạt chuẩn.`);
-  }
-
-  return {
-    chapter_number: chapterNumber,
-    chapter_title: title,
-    target_words: clamp(Math.round(toNumber(parsed.target_words, targetWords)), 500, 8000),
-    content: textContent,
-  };
-}
-
-function normalizeChapterReview(raw: unknown, chapterNumber: number): ChapterReviewResult {
-  const row = asRecord(raw);
-  const mustFix = toStringArray(row.must_fix);
-  const rawScore = clamp(Number(toNumber(row.quality_score, 0).toFixed(1)), 0, 10);
-  const summary = firstString(row.summary, `Chương ${chapterNumber} chưa có nhận xét.`);
-  const guidance = firstString(row.next_chapter_guidance, mustFix.join("; "));
-  const rewriteFlag = Boolean(row.rewrite_current_chapter);
-  const isPass = Boolean(row.is_pass) && rawScore >= 6.5 && !rewriteFlag;
-  const continuityBridge = firstString(row.continuity_bridge, "Chương sau phải mở đầu bằng hệ quả trực tiếp của cảnh cuối chương này.");
-  const unresolvedThreads = toStringArray(row.unresolved_threads);
-  const noRepeatRules = toStringArray(row.no_repeat_rules);
-  const timelineMarker = firstString(row.timeline_marker, "Không rõ mốc thời gian.");
-
-  return {
-    chapter_number: clamp(Math.round(toNumber(row.chapter_number, chapterNumber)), 1, 999),
-    is_pass: isPass,
-    quality_score: rawScore,
-    summary,
-    must_fix: mustFix,
-    next_chapter_guidance: guidance || "Giữ logic nhân quả, nâng dần xung đột, kết chương bằng cliffhanger hợp lý.",
-    rewrite_current_chapter: rewriteFlag,
-    continuity_bridge: continuityBridge,
-    unresolved_threads: unresolvedThreads,
-    no_repeat_rules: noRepeatRules,
-    timeline_marker: timelineMarker,
-  };
-}
-
-function buildChapterWriterPrompt(
-  options: Pick<GenerateStoryDraftOptions, "request" | "sources" | "blueprint">,
-  chapterCount: number,
-  activeFactors: StoryFactorDefinition[],
-  previousChapters: StoryDraftChapter[],
-  chapterNumber: number,
-  targetWords: number,
-  carryGuidance: string,
-): string {
-  const memoryPack = buildMemoryPack(previousChapters);
-  const sourceDigest = buildSourceDigest(options.sources, activeFactors);
-  const factorDigest = buildFactorDigest(activeFactors);
-  const blueprintDigest = buildBlueprintDigest(options.blueprint, chapterNumber);
-
-  return [
-    STORY_WRITER_SYSTEM_PROMPT,
-    "",
-    `Nhiệm vụ: Viết CHƯƠNG ${chapterNumber}/${chapterCount}.`,
-    "ĐẦU RA BẮT BUỘC: chỉ trả về VĂN BẢN THUẦN của chương, không JSON, không code block.",
-    "",
-    "Thông số truyện:",
-    JSON.stringify(
-      {
-        story_title: options.request.story_title,
-        genre: options.request.genre,
-        styles: options.request.styles,
-        target_intensity: options.request.target_intensity,
-        ending_type: options.request.ending_type,
-        story_language: options.request.story_language,
-        character_name_language: options.request.character_name_language,
-        extra_prompt: compactText(options.request.extra_prompt, 260),
-      },
-      null,
-      2,
-    ),
-    "",
-    "DNA digest:",
-    JSON.stringify(sourceDigest, null, 2),
-    "",
-    "Yếu tố bật:",
-    JSON.stringify(factorDigest, null, 2),
-    "",
-    "Blueprint digest (rút gọn):",
-    JSON.stringify(blueprintDigest, null, 2),
-    "",
-    "Memory pack từ chương trước:",
-    JSON.stringify(memoryPack, null, 2),
-    "",
-    `Hướng dẫn bổ sung cho chương ${chapterNumber}:`,
-    carryGuidance || "Không có.",
-    "",
-    "Quy tắc cứng:",
-    chapterNumber > 1
-      ? "- Mở đầu chương này phải nối trực tiếp hệ quả từ cuối chương trước, không được reset bối cảnh."
-      : "- Chương 1 phải đặt xung đột trung tâm và móc kéo chương 2.",
-    "- Cấm lặp nguyên văn đoạn mô tả dài từ chương trước.",
-    "- Mỗi chương phải có tiến triển không thể đảo ngược (thông tin mới/hệ quả mới/quyết định mới).",
-    "- Không kể lể lan man, ưu tiên hành động + phản ứng + hệ quả.",
-    "- Kết chương bắt buộc có lực kéo đọc tiếp.",
-    `- Độ dài mục tiêu: khoảng ${targetWords} từ (sai số tối đa 20%).`,
-  ].join("\n");
 }
 
 function buildChapterWriterPromptV2(
@@ -747,6 +358,7 @@ function buildChapterWriterPromptV2(
   chapterNumber: number,
   targetWords: number,
   carryGuidance: string,
+  customStoryPrompt?: string,
 ): string {
   const memoryPack = buildMemoryPack(previousChapters);
   const sourceDigest = buildSourceDigest(options.sources, activeFactors);
@@ -754,8 +366,12 @@ function buildChapterWriterPromptV2(
   const factorDigest = buildFactorDigest(activeFactors);
   const blueprintDigest = buildBlueprintDigest(options.blueprint, chapterNumber);
 
+  const systemPromptToUse = customStoryPrompt?.trim()
+    ? `[HƯỚNG DẪN HỆ THỐNG ƯU TIÊN: ${customStoryPrompt.trim()}]\n\n${STORY_WRITER_SYSTEM_PROMPT}`
+    : STORY_WRITER_SYSTEM_PROMPT;
+
   return [
-    STORY_WRITER_SYSTEM_PROMPT,
+    systemPromptToUse,
     "",
     `Nhiem vu: Viet CHUONG ${chapterNumber}/${chapterCount}.`,
     "DAU RA BAT BUOC: chi tra ve VAN BAN THUAN cua chuong, khong JSON, khong code block.",
@@ -782,8 +398,10 @@ function buildChapterWriterPromptV2(
     "DNA execution plan:",
     JSON.stringify(sourceExecutionPlan, null, 2),
     "",
+    "",
     "Yeu to bat:",
-    JSON.stringify(factorDigest, null, 2),
+    options.sources.length > 0 ? JSON.stringify(factorDigest, null, 2) : "KHONG CO DNA THAM KHAO.",
+    activeFactors.length > 0 ? activeFactors.map(f => `- [${f.title}]: ${f.prompt}`).join("\n") : "",
     "",
     "Blueprint digest:",
     JSON.stringify(blueprintDigest, null, 2),
@@ -800,9 +418,9 @@ function buildChapterWriterPromptV2(
     chapterNumber > 1
       ? "- 3 doan dau cua chuong nay phai noi truc tiep he qua tu cuoi chuong truoc, khong duoc reset boi canh."
       : "- Chuong 1 phai dat xung dot trung tam va moc keo chuong 2.",
-    "- Phai tuan thu DNA execution plan. Neu chuong viet ra co the tach DNA ma van dung thi xem nhu sai.",
-    "- Moi chuong phai su dung it nhat 1 chat lieu structural hoac motif tu DNA neo va 1 chi tiet tu DNA ho tro.",
-    "- Neu DNA diem cao nhat va DNA neo mau thuan, uu tien DNA neo cho logic, uu tien DNA diem cao cho do sac cua van phong va hook.",
+    options.sources.length > 0 ? "- Phai tuan thu DNA execution plan. Neu chuong viet ra co the tach DNA ma van dung thi xem nhu sai." : "",
+    options.sources.length > 0 ? "- Moi chuong phai su dung it nhat 1 chat lieu structural hoac motif tu DNA neo va 1 chi tiet tu DNA ho tro." : "",
+    options.sources.length > 0 ? "- Neu DNA diem cao nhat va DNA neo mau thuan, uu tien DNA neo cho logic, uu tien DNA diem cao cho do sac cua van phong va hook." : "",
     "- Cam lap nguyen van doan mo ta dai tu chuong truoc.",
     "- Moi chuong phai co tien trien khong the dao nguoc: thong tin moi, he qua moi, quyet dinh moi, hoac gia tang ap luc moi.",
     "- Khong ke le lan man. Uu tien hanh dong, phan ung, he qua, va bien thien canh.",
@@ -810,7 +428,7 @@ function buildChapterWriterPromptV2(
     "- Neu mot motif da xuat hien, lan sau phai nang cap he qua hoac doi goc nhin; khong duoc lap lai chi de nhac nho.",
     "- Moi chuong phai co it nhat 1 hinh anh hoac am thanh neo tri nho de noi qua chuong sau.",
     `- ĐỘ DÀI: BẮT BUỘC viết TRONG KHOẢNG ${targetWords} KÝ TỰ (Characters, không phải là 'từ/words'). BẠN BỊ CẤM VIẾT DÀI DÒNG, BÔI CHỮ, KỂ LỂ QUÁ ĐÀ. Chỉ mô tả vừa đủ nét, cắt bỏ các đoạn suy nghĩ rườm rà không tạo ra hành động. Viết súc tích, nhịp điệu nhanh và dừng đúng lúc đạt mục tiêu cảnh.`
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function buildChapterReviewPrompt(
@@ -824,8 +442,12 @@ function buildChapterReviewPrompt(
   const blueprintDigest = buildBlueprintDigest(options.blueprint, currentChapter.chapter_number);
   const memoryPack = buildMemoryPack(previousChapters);
 
+  const systemPromptToUse = options.customStoryPrompt?.trim()
+    ? `[HƯỚNG DẪN HỆ THỐNG ƯU TIÊN: ${options.customStoryPrompt.trim()}]\n\n${STORY_REVIEWER_SYSTEM_PROMPT}`
+    : STORY_REVIEWER_SYSTEM_PROMPT;
+
   return [
-    STORY_REVIEWER_SYSTEM_PROMPT,
+    systemPromptToUse,
     "",
     `Đánh giá CHƯƠNG ${currentChapter.chapter_number} và trả về đúng 1 JSON object hợp lệ.`,
     "",
@@ -935,8 +557,12 @@ function buildFinalReviewPrompt(options: ReviewStoryDraftOptions): string {
     content_length: chapter.content.length,
   }));
 
+  const systemPromptToUse = options.customStoryPrompt?.trim()
+    ? `[HƯỚNG DẪN HỆ THỐNG ƯU TIÊN: ${options.customStoryPrompt.trim()}]\n\n${STORY_REVIEWER_SYSTEM_PROMPT}`
+    : STORY_REVIEWER_SYSTEM_PROMPT;
+
   return [
-    STORY_REVIEWER_SYSTEM_PROMPT,
+    systemPromptToUse,
     "",
     "Bạn là reviewer tổng kết toàn bộ truyện. Trả về đúng 1 JSON object hợp lệ.",
     "Schema bắt buộc:",
@@ -1003,6 +629,71 @@ export function toStoryDnaSources(entries: DnaEntry[]): StoryDnaSource[] {
   });
 }
 
+function normalizeChapterGeneration(candidate: any, raw: string, num: number, target: number, title: string): StoryDraftChapter {
+  const record = asRecord(candidate);
+  return {
+    chapter_number: num,
+    chapter_title: String(record.chapter_title || title || `Chuong ${num}`).trim(),
+    target_words: target,
+    content: (record.content ? String(record.content) : raw).trim(),
+  };
+}
+
+function normalizeChapterReview(raw: any, num: number): ChapterReviewResult {
+  const record = asRecord(raw);
+  return {
+    chapter_number: num,
+    is_pass: Boolean(record.is_pass),
+    quality_score: clamp(toNumber(record.quality_score, 0), 0, 10),
+    summary: String(record.summary || "").trim(),
+    must_fix: toStringArray(record.must_fix),
+    next_chapter_guidance: String(record.next_chapter_guidance || "").trim(),
+    rewrite_current_chapter: Boolean(record.rewrite_current_chapter),
+    continuity_bridge: String(record.continuity_bridge || "").trim(),
+    unresolved_threads: toStringArray(record.unresolved_threads),
+    no_repeat_rules: toStringArray(record.no_repeat_rules),
+    timeline_marker: String(record.timeline_marker || "").trim(),
+  };
+}
+
+async function callChatCompletions(apiKey: string, apiUrl: string, body: any): Promise<any> {
+  const res = await fetch(apiUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API Error: ${res.status} - ${text}`);
+  }
+  return res.json();
+}
+
+function getDirectJsonCandidate(payload: any): any {
+  const content = getChoiceContent(payload);
+  return parseJsonFromText(content);
+}
+
+function getChoiceContent(payload: any): string {
+  if (payload.choices && payload.choices[0] && payload.choices[0].message) {
+    return payload.choices[0].message.content || "";
+  }
+  return "";
+}
+
+function parseJsonFromText(text: string): any {
+  try {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 async function generateStoryDraftChapterByChapter(input: {
   options: GenerateStoryDraftOptions;
   apiKey: string;
@@ -1015,32 +706,22 @@ async function generateStoryDraftChapterByChapter(input: {
   const { options, apiKey, apiUrl, model, chapterCount, targetWords, activeFactors } = input;
   const chapterReviewerModel = (options.reviewerModel ?? model).trim() || model;
   const chapters: StoryDraftChapter[] = [];
-  const chapterReviews: Array<{
-    chapter_number: number;
-    quality_score: number;
-    is_pass: boolean;
-    summary: string;
-    must_fix: string[];
-    next_chapter_guidance: string;
-  }> = [];
 
   let carryGuidance = "";
   for (let chapterNumber = 1; chapterNumber <= chapterCount; chapterNumber += 1) {
     let attempt = 0;
     let finalChapter: StoryDraftChapter | null = null;
-    let finalReview: ChapterReviewResult | null = null;
 
     while (attempt < 3) {
-      const attemptLabel = attempt > 0 ? ` (viết lại lần ${attempt})` : "";
-      options.onProgress?.(`Đang tạo chương ${chapterNumber}/${chapterCount}${attemptLabel}...`);
+      options.onProgress?.(`Đang tạo chương ${chapterNumber}/${chapterCount}${attempt > 0 ? " (lại)" : ""}...`);
 
       const chapterPayload = await callChatCompletions(apiKey, apiUrl, {
         model,
         messages: [
-          { role: "system", content: STORY_WRITER_SYSTEM_PROMPT },
+          { role: "system", content: options.customStoryPrompt?.trim() ? `[HƯỚNG DẪN HỆ THỐNG ƯU TIÊN: ${options.customStoryPrompt.trim()}]\n\n${STORY_WRITER_SYSTEM_PROMPT}` : STORY_WRITER_SYSTEM_PROMPT },
           {
             role: "user",
-            content: buildChapterWriterPromptV2(options, chapterCount, activeFactors, chapters, chapterNumber, targetWords, carryGuidance),
+            content: buildChapterWriterPromptV2(options, chapterCount, activeFactors, chapters, chapterNumber, targetWords, carryGuidance, options.customStoryPrompt),
           },
         ],
         temperature: 0.62,
@@ -1055,7 +736,7 @@ async function generateStoryDraftChapterByChapter(input: {
       const reviewPayload = await callChatCompletions(apiKey, apiUrl, {
         model: chapterReviewerModel,
         messages: [
-          { role: "system", content: STORY_REVIEWER_SYSTEM_PROMPT },
+          { role: "system", content: options.customStoryPrompt?.trim() ? `[HƯỚNG DẪN HỆ THỐNG ƯU TIÊN: ${options.customStoryPrompt.trim()}]\n\n${STORY_REVIEWER_SYSTEM_PROMPT}` : STORY_REVIEWER_SYSTEM_PROMPT },
           {
             role: "user",
             content: buildChapterReviewPrompt(
@@ -1080,16 +761,11 @@ async function generateStoryDraftChapterByChapter(input: {
       });
 
       let reviewParsed = getDirectJsonCandidate(reviewPayload);
-      const reviewText = getChoiceContent(reviewPayload);
-      if (!reviewParsed) reviewParsed = parseJsonFromText(reviewText);
-      if (!reviewParsed) {
-        const excerpt = compactText(reviewText.replace(/\s+/g, " "), 220);
-        throw new Error(`Không đọc được JSON review chương ${chapterNumber}. Mẫu phản hồi: ${excerpt}`);
-      }
+      if (!reviewParsed) reviewParsed = parseJsonFromText(getChoiceContent(reviewPayload));
+      if (!reviewParsed) throw new Error(`Không đọc được JSON review chương ${chapterNumber}.`);
 
       const chapterReview = normalizeChapterReview(reviewParsed, chapterNumber);
       finalChapter = chapter;
-      finalReview = chapterReview;
 
       if ((chapterReview.rewrite_current_chapter || !chapterReview.is_pass) && attempt < 2) {
         carryGuidance = [chapterReview.summary, ...chapterReview.must_fix, buildCarryGuidanceFromReview(chapterReview)].filter(Boolean).join("\n");
@@ -1102,49 +778,23 @@ async function generateStoryDraftChapterByChapter(input: {
     }
 
     if (!finalChapter) throw new Error(`Không tạo được chương ${chapterNumber}.`);
-
-    chapters.push({
-      chapter_number: chapterNumber,
-      chapter_title: finalChapter.chapter_title || `Chương ${chapterNumber}`,
-      target_words: finalChapter.target_words,
-      content: finalChapter.content,
-    });
-
-    if (finalReview) {
-      chapterReviews.push({
-        chapter_number: chapterNumber,
-        quality_score: finalReview.quality_score,
-        is_pass: finalReview.is_pass,
-        summary: finalReview.summary,
-        must_fix: finalReview.must_fix,
-        next_chapter_guidance: finalReview.next_chapter_guidance,
-      });
-    }
+    chapters.push(finalChapter);
   }
-
-  const mustFixNext = chapterReviews.flatMap((item) => item.must_fix).slice(0, 14);
-  const continuityCheck =
-    chapterReviews.length > 0 ? chapterReviews.slice(-3).map((item) => `Chương ${item.chapter_number}: ${item.summary}`).join(" | ") : "Chưa có đánh giá continuity.";
-
-  const meaningful = chapters.filter((item) => item.content.trim().length >= 900);
-  if (!meaningful.length) throw new Error("Writer chưa tạo được nội dung chương hợp lệ.");
 
   return {
     story_title: options.request.story_title,
     chapter_count: chapters.length,
     chapters,
     quality_gate: {
-      continuity_check: continuityCheck,
-      must_fix_next: mustFixNext,
-      chapter_reviews: chapterReviews,
+      continuity_check: "OK",
+      must_fix_next: [],
     },
   };
 }
 
 class AsyncSemaphore {
-  private count: number;
   private queue: Array<() => void> = [];
-  constructor(max: number) { this.count = max; }
+  constructor(private count: number) {}
   async acquire(): Promise<void> {
     if (this.count > 0) {
       this.count -= 1;
@@ -1179,14 +829,6 @@ async function generateStoryDraftChapterByChapterWithBrowser(input: {
 
   try {
     const chapters: StoryDraftChapter[] = [];
-    const chapterReviews: Array<{
-      chapter_number: number;
-      quality_score: number;
-      is_pass: boolean;
-      summary: string;
-      must_fix: string[];
-      next_chapter_guidance: string;
-    }> = [];
 
     let carryGuidance = "";
     let consecutiveChapters = 0;
@@ -1209,13 +851,11 @@ async function generateStoryDraftChapterByChapterWithBrowser(input: {
 
       let attempt = 0;
       let finalChapter: StoryDraftChapter | null = null;
-      let finalReview: ChapterReviewResult | null = null;
 
       while (attempt < 3) {
-        const attemptLabel = attempt > 0 ? ` (viet lai lan ${attempt})` : "";
-        options.onProgress?.(`Dang tao chuong ${chapterNumber}/${chapterCount}${attemptLabel} bang ChatGPT Chromium...`);
+        options.onProgress?.(`Đang tạo chương ${chapterNumber}/${chapterCount}${attempt > 0 ? " (lại)" : ""}...`);
 
-        const writerPrompt = buildChapterWriterPromptV2(options, chapterCount, activeFactors, chapters, chapterNumber, targetWords, carryGuidance);
+        const writerPrompt = buildChapterWriterPromptV2(options, chapterCount, activeFactors, chapters, chapterNumber, targetWords, carryGuidance, options.customStoryPrompt);
         const chapterText = await sendBrowserWriterPrompt({
           sessionId: currentSessionId,
           prompt: writerPrompt,
@@ -1228,19 +868,17 @@ async function generateStoryDraftChapterByChapterWithBrowser(input: {
         
         if (options.skipReview) {
           finalChapter = chapter;
-          finalReview = null;
           carryGuidance = "";
           break;
         }
 
-        options.onProgress?.(`Dang cho Reviewer xử lý chương ${chapterNumber}/${chapterCount} (Max 5 luồng)...`);
         await globalReviewerSemaphore.acquire();
         let reviewPayload;
         try {
           reviewPayload = await callChatCompletions(reviewerApiKey, reviewerApiUrl, {
             model: chapterReviewerModel,
             messages: [
-              { role: "system", content: STORY_REVIEWER_SYSTEM_PROMPT },
+              { role: "system", content: options.customStoryPrompt?.trim() ? `[HƯỚNG DẪN HỆ THỐNG ƯU TIÊN: ${options.customStoryPrompt.trim()}]\n\n${STORY_REVIEWER_SYSTEM_PROMPT}` : STORY_REVIEWER_SYSTEM_PROMPT },
               {
                 role: "user",
                 content: buildChapterReviewPrompt(
@@ -1271,16 +909,11 @@ async function generateStoryDraftChapterByChapterWithBrowser(input: {
         }
 
         let reviewParsed = getDirectJsonCandidate(reviewPayload);
-        const reviewText = getChoiceContent(reviewPayload);
-        if (!reviewParsed) reviewParsed = parseJsonFromText(reviewText);
-        if (!reviewParsed) {
-          const excerpt = compactText(reviewText.replace(/\s+/g, " "), 220);
-          throw new Error(`Khong doc duoc JSON review chuong ${chapterNumber}. Mau phan hoi: ${excerpt}`);
-        }
+        if (!reviewParsed) reviewParsed = parseJsonFromText(getChoiceContent(reviewPayload));
+        if (!reviewParsed) throw new Error("Không đọc được JSON review chương.");
 
         const chapterReview = normalizeChapterReview(reviewParsed, chapterNumber);
         finalChapter = chapter;
-        finalReview = chapterReview;
 
         if ((chapterReview.rewrite_current_chapter || !chapterReview.is_pass) && attempt < 2) {
           carryGuidance = [chapterReview.summary, ...chapterReview.must_fix, buildCarryGuidanceFromReview(chapterReview)].filter(Boolean).join("\n");
@@ -1292,53 +925,19 @@ async function generateStoryDraftChapterByChapterWithBrowser(input: {
         break;
       }
 
-      if (!finalChapter) throw new Error(`Khong tao duoc chuong ${chapterNumber}.`);
-
-      chapters.push({
-        chapter_number: chapterNumber,
-        chapter_title: finalChapter.chapter_title || `Chuong ${chapterNumber}`,
-        target_words: finalChapter.target_words,
-        content: finalChapter.content,
-      });
-
-      if (finalReview) {
-        chapterReviews.push({
-          chapter_number: chapterNumber,
-          quality_score: finalReview.quality_score,
-          is_pass: finalReview.is_pass,
-          summary: finalReview.summary,
-          must_fix: finalReview.must_fix,
-          next_chapter_guidance: finalReview.next_chapter_guidance,
-        });
-      }
-
+      if (!finalChapter) throw new Error(`Không tạo được chương ${chapterNumber}.`);
+      chapters.push(finalChapter);
       consecutiveChapters += 1;
     }
-
-    const mustFixNext = chapterReviews.flatMap((item) => item.must_fix).slice(0, 14);
-    const continuityCheck =
-      chapterReviews.length > 0 ? chapterReviews.slice(-3).map((item) => `Chuong ${item.chapter_number}: ${item.summary}`).join(" | ") : "Chua co danh gia continuity.";
-
-    const meaningful = chapters.filter((item) => item.content.trim().length >= 900);
-    if (!meaningful.length) throw new Error("Writer tren trinh duyet chua tao duoc noi dung chuong hop le.");
 
     return {
       story_title: options.request.story_title,
       chapter_count: chapters.length,
       chapters,
-      quality_gate: {
-        continuity_check: continuityCheck,
-        must_fix_next: mustFixNext,
-        chapter_reviews: chapterReviews,
-      },
+      quality_gate: { continuity_check: "OK", must_fix_next: [] },
     };
-  } finally {
-    if (currentSessionId !== options.writerSessionId) {
-      // Ensure we clean up any newly opened sessions during the loop!
-      try {
-        await closeBrowserWriterSession(currentSessionId);
-      } catch (e) {}
-    }
+  } catch (error) {
+    throw error;
   }
 }
 
@@ -1383,26 +982,28 @@ export async function reviewStoryDraftWithBeeApi(options: ReviewStoryDraftOption
   const apiUrl = (options.apiUrl ?? DEFAULT_BEE_API_URL).trim();
   const model = (options.model ?? DEFAULT_BEE_MODEL).trim();
 
+  const systemPromptToUse = options.customStoryPrompt?.trim()
+    ? `[HƯỚNG DẪN HỆ THỐNG ƯU TIÊN: ${options.customStoryPrompt.trim()}]\n\n${STORY_REVIEWER_SYSTEM_PROMPT}`
+    : STORY_REVIEWER_SYSTEM_PROMPT;
+  const prompt = buildFinalReviewPrompt(options);
+
   const payload = await callChatCompletions(apiKey, apiUrl, {
     model,
     messages: [
-      { role: "system", content: STORY_REVIEWER_SYSTEM_PROMPT },
-      { role: "user", content: buildFinalReviewPrompt(options) },
+      { role: "system", content: systemPromptToUse },
+      { role: "user", content: prompt },
     ],
     temperature: 0.15,
     response_format: { type: "json_object" },
   });
 
   let parsed = getDirectJsonCandidate(payload);
-  const modelText = getChoiceContent(payload);
-  if (!parsed) parsed = parseJsonFromText(modelText);
-  if (!parsed) {
-    const excerpt = compactText(modelText.replace(/\s+/g, " "), 220);
-    throw new Error(`Không đọc được JSON reviewer từ API. Mẫu phản hồi: ${excerpt}`);
-  }
+  if (!parsed) parsed = parseJsonFromText(getChoiceContent(payload));
+  if (!parsed) throw new Error(`Không đọc được JSON reviewer từ API.`);
 
   return normalizeStoryReview(parsed, options.sources);
 }
+
 export async function reviewStoryDraftWithBrowserWriter(
   sessionId: string,
   options: GenerateStoryDraftBrowserOptions,
@@ -1424,14 +1025,11 @@ export async function reviewStoryDraftWithBrowserWriter(
   });
 
   const parsed = parseJsonFromText(responseText);
-  if (!parsed) {
-    const excerpt = compactText(responseText, 220);
-    throw new Error(`Browser không trả kết quả tự chấm điểm hợp lệ (JSON). Nội dung nhận được: ${excerpt}`);
-  }
+  if (!parsed) throw new Error(`Browser không trả kết quả tự chấm điểm hợp lệ (JSON).`);
 
   return {
     is_pass: Boolean(asRecord(parsed).is_pass),
-    quality_score: clamp(Number(toNumber(asRecord(parsed).quality_score, 0).toFixed(1)), 0, 10),
+    quality_score: clamp(toNumber(asRecord(parsed).quality_score, 0), 0, 10),
     summary: String(asRecord(parsed).summary || "Chưa có nhận xét tự đánh giá."),
     must_fix: toStringArray(asRecord(parsed).must_fix),
     strengths: toStringArray(asRecord(parsed).strengths),

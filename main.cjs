@@ -16,7 +16,26 @@ const DEFAULT_CHATGPT_URL = "https://chatgpt.com/";
 const { spawn } = require("child_process");
 const NODRIVER_SESSIONS = new Map();
 const WRITER_PROFILE_DIR = "writer-browser-profile";
-const PYTHON_BRIDGE_PATH = path.join(__dirname, "nodriver_bridge.py");
+
+function getPythonBridgePath() {
+  const bridgeName = "nodriver_bridge.py";
+  const internalPath = path.join(__dirname, bridgeName);
+
+  if (__dirname.includes("app.asar")) {
+    const extractedPath = path.join(app.getPath("userData"), bridgeName);
+    try {
+      if (!fs.existsSync(extractedPath) || fs.statSync(internalPath).mtimeMs > fs.statSync(extractedPath).mtimeMs || true) {
+         const bridgeContent = fs.readFileSync(internalPath, "utf8");
+         fs.writeFileSync(extractedPath, bridgeContent, "utf8");
+      }
+      return extractedPath;
+    } catch (error) {
+      console.error("Loi khi trich xuat nodriver_bridge.py tu asar:", error);
+    }
+  }
+
+  return internalPath;
+}
 
 function makeNodriverSessionId() {
   return `nodriver_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
@@ -263,7 +282,7 @@ async function createStoryWriterSession(input) {
   }
 
   const sessionId = makeNodriverSessionId();
-  const pyProcess = spawn("python", [PYTHON_BRIDGE_PATH], {
+  const pyProcess = spawn("python", [getPythonBridgePath()], {
     env: { ...process.env, PYTHONIOENCODING: "utf-8" },
     stdio: ["pipe", "pipe", "pipe"], // Ensure pipes are open
   });
@@ -324,11 +343,22 @@ async function sendStoryWriterPrompt(input) {
 
   // Poll for response
   const start = Date.now();
+  let retryCount = 0;
   while (Date.now() - start < timeoutMs) {
     const res = await callPythonBridge(session, { cmd: "get_response" });
     if (res.status === "completed") {
       return res.text;
     }
+    
+    // If we hit a known error UI, let's try to start a new chat and retry once.
+    if (res.status === "error_retryable" && retryCount < 1) {
+        console.log(`[AutoRun] Phat hien loi ChatGPT (${res.error}). Dang tu dong tao chat moi de thu lai...`);
+        retryCount++;
+        await new Promise((r) => setTimeout(r, 2000));
+        await callPythonBridge(session, { cmd: "send", prompt, new_conversation: true });
+        continue;
+    }
+
     // generating or waiting
     await new Promise((r) => setTimeout(r, 2000));
   }
@@ -379,7 +409,7 @@ function createWindow() {
     y: initialState.y,
     minWidth: 1280,
     minHeight: 720,
-    title: "AutoSAPG - v1.0.2",
+    title: "AutoSAPG - v1.0.15",
     icon: iconPath,
     autoHideMenuBar: true,
     show: false,
@@ -443,7 +473,7 @@ function setupAutoUpdates(mainWindow) {
 
   autoUpdater.on("checking-for-update", () => sendStatus("Đang kiểm tra bản cập nhật..."));
   autoUpdater.on("update-available", (info) => sendStatus(`Phát hiện bản v${info.version}, đang tải...`));
-  autoUpdater.on("update-not-available", () => sendStatus(""));
+  autoUpdater.on("update-not-available", () => sendStatus("Đã là bản mới nhất."));
   autoUpdater.on("error", (err) => sendStatus(`Lỗi cập nhật: ${err.message || err}`));
   autoUpdater.on("download-progress", (progressObj) => {
     const percent = Math.round(progressObj.percent);
@@ -463,6 +493,14 @@ function setupAutoUpdates(mainWindow) {
 
     if (response === 0) {
       autoUpdater.quitAndInstall();
+    }
+  });
+
+  ipcMain.handle("app:check-for-updates", async () => {
+    try {
+      if (autoUpdater) await autoUpdater.checkForUpdatesAndNotify();
+    } catch (error) {
+      sendStatus(`Lỗi: ${error.message || error}`);
     }
   });
 

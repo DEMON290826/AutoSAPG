@@ -97,7 +97,7 @@ export function loadDnaBundleFromDirectory(dnaDirectory: string): DnaBundleView 
   return readBundleByDirectory(runtime, dnaDirectory);
 }
 
-export function loadDnaBundleFromSourceFile(sourceFile: string): DnaBundleView {
+export function loadDnaBundleFromSourceFile(sourceFile: string, storageDir?: string): DnaBundleView {
   const runtime = getRuntime();
   if (!runtime) {
     throw new Error("Chi ho tro xem DNA khi chay bang Electron.");
@@ -106,7 +106,12 @@ export function loadDnaBundleFromSourceFile(sourceFile: string): DnaBundleView {
     throw new Error("Khong co source_file de doc DNA.");
   }
 
-  const indexDir = runtime.path.join(runtime.os.homedir(), "Documents", "DNA_Library", "dna_index");
+  const rawBase = String(storageDir ?? "").trim();
+  const baseDir = rawBase 
+    ? (runtime.path.isAbsolute(rawBase) ? rawBase : runtime.path.join(runtime.os.homedir(), rawBase))
+    : runtime.path.join(runtime.os.homedir(), "Documents", "DNA_Library");
+    
+  const indexDir = runtime.path.join(baseDir, "dna_index");
   const absoluteSource = runtime.path.isAbsolute(sourceFile) ? sourceFile : runtime.path.join(indexDir, sourceFile);
   const dnaDirectory = runtime.path.dirname(absoluteSource);
 

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { BrainCircuit, Copy, Database, FileText, FolderOpen, LoaderCircle, Plus, Settings2, Sparkles, X, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Bot, BrainCircuit, Copy, Database, FileText, FolderOpen, LayoutDashboard, LoaderCircle, Plus, Settings2, Sparkles, X, XCircle } from "lucide-react";
 import { CustomSelect } from "../components/CustomSelect";
 import { generateStoryBlueprintWithBrowser, type BlueprintDnaSource, type StoryBlueprintResult } from "../dna/blueprintApi";
 import { getSortedCategoryKeys, loadCategoryEntries, normalizeText } from "../dna/libraryService";
@@ -62,6 +62,7 @@ type StoryBuildJob = {
   output_directory: string;
   output_json: string;
   reviewer_result: StoryReviewResult | null;
+  customStoryPrompt?: string;
   created_at: string;
   updated_at: string;
 };
@@ -71,6 +72,8 @@ type PersistedStoryBuildState = {
   jobs: StoryBuildJob[];
   selectedJobIds: string[];
   activeJobId: string;
+  useMatchedDna?: boolean;
+  customStoryPrompt?: string;
 };
 
 type StoryOutputSummary = {
@@ -380,11 +383,14 @@ export function StoryBlueprintView({
   const apiKeys = useMemo(() => storyApiKeys.split(/[;,\n]+/).map(k => k.trim()).filter(Boolean), [storyApiKeys]);
   const [selectedJobIds, setSelectedJobIds] = useState<string[]>(() => persisted?.selectedJobIds ?? []);
   const [activeJobId, setActiveJobId] = useState(() => persisted?.activeJobId ?? "");
+  const [useMatchedDna, setUseMatchedDna] = useState(() => persisted?.useMatchedDna ?? true);
+  const [customStoryPrompt, setCustomStoryPrompt] = useState(() => persisted?.customStoryPrompt ?? "");
   const [message, setMessage] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeSessionCount, setActiveSessionCount] = useState(0);
   const [previewDnaIds, setPreviewDnaIds] = useState<string[]>([]);
   const [openRuntimeConfig, setOpenRuntimeConfig] = useState(false);
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [openStoryViewer, setOpenStoryViewer] = useState(false);
   const [storyViewerContent, setStoryViewerContent] = useState("");
   const [storyViewerError, setStoryViewerError] = useState("");
@@ -392,95 +398,55 @@ export function StoryBlueprintView({
   const [dnaSelectorJobId, setDnaSelectorJobId] = useState<string | null>(null);
   const [dnaSelectorIds, setDnaSelectorIds] = useState<string[]>([]);
 
-  const vendors = useMemo(() => Array.from(new Set(models.map((item) => item.vendor))).sort((a, b) => a.localeCompare(b, "vi")), [models]);
-  const reviewerModelsByVendor = useMemo(
-    () =>
-      models
-        .filter((item) => item.vendor === reviewerVendor)
-        .map((item) => item.model)
-        .sort((a, b) => a.localeCompare(b, "vi")),
-    [models, reviewerVendor],
-  );
-  const vendorOptions = useMemo(
-    () => [{ value: "", label: "Chọn hãng" }, ...vendors.map((vendor) => ({ value: vendor, label: vendor }))],
-    [vendors],
-  );
+  const libraryEntries = manualEntries;
+  const sourcePool = libraryEntries.filter((e) => e.scores.overall >= 1);
+  const sourceById = useMemo(() => new Map(sourcePool.map((e) => [e.dna_id, e])), [sourcePool]);
+
+  const activeJob = jobs.find((job) => job.id === activeJobId) || null;
+  const activeOutputSummary = useMemo(() => parseOutputSummary(activeJob?.output_json ?? ""), [activeJob]);
+  const allSelected = jobs.length > 0 && selectedJobIds.length === jobs.length;
+
+  const vendorOptions = useMemo(() => {
+    const vendors = Array.from(new Set(models.map((m) => m.vendor)));
+    return vendors.map((v) => ({ label: v.toUpperCase(), value: v }));
+  }, [models]);
 
   const reviewerModelOptions = useMemo(() => {
-    if (!reviewerVendor) {
-      return [{ value: "", label: "Chọn hãng trước", disabled: true }];
-    }
-    return [{ value: "", label: "Chọn model" }, ...reviewerModelsByVendor.map((modelName) => ({ value: modelName, label: modelName }))];
-  }, [reviewerVendor, reviewerModelsByVendor]);
-
-  const sourcePool = useMemo(() => {
-    const fromLibrary = getSortedCategoryKeys().flatMap((categoryKey) => loadCategoryEntries(categoryKey));
-    const merged = new Map<string, DnaEntry>();
-    [...fromLibrary, ...manualEntries].forEach((entry) => {
-      if (!merged.has(entry.dna_id)) merged.set(entry.dna_id, entry);
-    });
-    return Array.from(merged.values()).sort((left, right) => right.scores.overall - left.scores.overall);
-  }, [manualEntries]);
-
-  const sourceById = useMemo(() => new Map(sourcePool.map((entry) => [entry.dna_id, entry])), [sourcePool]);
-  const allSelected = jobs.length > 0 && selectedJobIds.length === jobs.length;
-  const selectedJobs = jobs.filter((job) => selectedJobIds.includes(job.id));
-  const activeJob = jobs.find((job) => job.id === activeJobId) ?? jobs[0] ?? null;
-  const activeOutputSummary = useMemo(() => parseOutputSummary(activeJob?.output_json ?? ""), [activeJob?.output_json]);
+    return models
+      .filter((m) => m.vendor === reviewerVendor)
+      .map((m) => ({ label: m.model, value: m.model }));
+  }, [models, reviewerVendor]);
 
   useEffect(() => {
-    writeJsonStorage<PersistedStoryBuildState>("story.create.state", {
+    writeJsonStorage("story.create.state", {
       jsonInput,
       jobs,
       selectedJobIds,
       activeJobId,
+      useMatchedDna,
+      customStoryPrompt,
     });
     
-    // Auto-match DNA when JSON input changes
     try {
       const request = parseStoryCreationRequest(jsonInput);
-      const matches = pickMatchedDnaIds(request, sourcePool);
-      setPreviewDnaIds(matches);
+      const matched = pickMatchedDnaIds(request, sourcePool);
+      setPreviewDnaIds(matched);
     } catch {
       setPreviewDnaIds([]);
     }
-  }, [jsonInput, jobs, selectedJobIds, activeJobId, sourcePool]);
+  }, [jsonInput, jobs, selectedJobIds, activeJobId, sourcePool, useMatchedDna, customStoryPrompt]);
 
   useEffect(() => {
-    let timer: any;
-    const updateCount = async () => {
-       try {
-         const count = await getBrowserWriterSessionCount();
-         setActiveSessionCount(count);
-       } catch (e) {}
-       timer = setTimeout(updateCount, 3000);
-    };
-    updateCount();
-    return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!jobs.length) {
-      setActiveJobId("");
-      return;
-    }
-    if (!jobs.some((job) => job.id === activeJobId)) {
-      setActiveJobId(jobs[0].id);
-    }
-  }, [jobs, activeJobId]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
+    const timer = setInterval(async () => {
       try {
-        const request = parseStoryCreationRequest(jsonInput);
-        const matched = pickMatchedDnaIds(request, sourcePool);
-        setPreviewDnaIds(matched);
-      } catch (e) {
-        setPreviewDnaIds([]);
+        const count = await getBrowserWriterSessionCount();
+        setActiveSessionCount(count);
+      } catch {
+        setActiveSessionCount(0);
       }
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [jsonInput, sourcePool]);
+    }, 1500);
+    return () => clearInterval(timer);
+  }, []);
 
   const toggleAllJobs = (checked: boolean) => {
     setSelectedJobIds(checked ? jobs.map((job) => job.id) : []);
@@ -493,7 +459,7 @@ export function StoryBlueprintView({
   const addJobFromJson = () => {
     try {
       const request = parseStoryCreationRequest(jsonInput);
-      const matchedIds = pickMatchedDnaIds(request, sourcePool);
+      const matchedIds = useMatchedDna ? pickMatchedDnaIds(request, sourcePool) : [];
       const activeFactorKeys = pickActiveFactors(request, factors).map((factor) => factor.key);
       const createdAt = new Date().toISOString();
       const nextJob: StoryBuildJob = {
@@ -508,6 +474,7 @@ export function StoryBlueprintView({
         output_directory: "",
         output_json: "",
         reviewer_result: null,
+        customStoryPrompt: customStoryPrompt.trim() || undefined,
         created_at: createdAt,
         updated_at: createdAt,
       };
@@ -591,7 +558,7 @@ export function StoryBlueprintView({
         job.request.extra_prompt,
         `Mục tiêu cường độ: ${job.request.target_intensity}`,
         `Kết thúc: ${job.request.ending_type}`,
-        `Yêu tố bật: ${activeFactors.map((factor) => factor.key).join(", ") || "không có"}`,
+        `Yếu tố bật: ${activeFactors.map((factor) => factor.key).join(", ") || "không có"}`,
       ]
         .filter(Boolean)
         .join("\n");
@@ -640,11 +607,12 @@ export function StoryBlueprintView({
                   character_name_language: job.request.character_name_language,
                   additional_notes: blueprintAdditionalNotes,
                 },
-                sources: dnaSourcesWithPayload,
-                activeFactors,
+                sources: dnaSourcesWithPayload as any,
+                activeFactors: activeFactors as any,
                 reviewerApiKey: currentApiKey,
                 reviewerApiUrl: apiUrl,
                 reviewerModel,
+                customStoryPrompt: job.customStoryPrompt,
               });
             }
 
@@ -664,6 +632,7 @@ export function StoryBlueprintView({
                 factors: activeFactors,
                 skipReview: !useStoryReviewer,
                 onProgress: (detail) => markJob(detail, "dang_chay"),
+                customStoryPrompt: job.customStoryPrompt,
               });
             }
 
@@ -679,6 +648,7 @@ export function StoryBlueprintView({
                   draft,
                   sources: toStoryDnaSources(dnaEntries),
                   factors: activeFactors,
+                  customStoryPrompt: job.customStoryPrompt,
                 });
               } else {
                 markJob("Đang yêu cầu ChatGPT tự chấm điểm (Self-Review)...");
@@ -695,11 +665,12 @@ export function StoryBlueprintView({
                   sources: toStoryDnaSources(dnaEntries),
                   factors: activeFactors,
                   skipReview: true,
+                  customStoryPrompt: job.customStoryPrompt,
                 }, draft);
               }
             }
             
-            break; // Success!
+            break; 
           } catch (e: any) {
             lastError = e.message || String(e);
             console.error(`Attempt ${attempt} failed:`, e);
@@ -727,15 +698,8 @@ export function StoryBlueprintView({
           {
             request: job.request,
             active_factor_keys: activeFactors.map((factor) => factor.key),
-            matched_dna_ids: dnaEntries.map((entry) => entry.dna_id),
             blueprint,
             draft,
-            reviewer: review,
-            output_directory: outputDirectory || null,
-            writer_session: {
-              browser_name: writerSession.browserName,
-              chat_url: writerSession.chatUrl,
-            },
           },
           null,
           2,
@@ -747,224 +711,114 @@ export function StoryBlueprintView({
               ? {
                   ...item,
                   status: "xong",
-                  statusDetail: review
-                    ? `Hoàn tất ${draft.chapter_count} chương, reviewer ${review.is_pass ? "đạt" : "cần sửa"} (${review.quality_score.toFixed(1)})`
-                    : `Hoàn tất ${draft.chapter_count} chương truyện`,
+                  statusDetail: "Hoàn tất tạo truyện.",
                   output_directory: outputDirectory,
                   output_json: outputJson,
                   reviewer_result: review,
-                  message: review ? review.summary : "Hoàn tất (chưa có review)",
                   updated_at: new Date().toISOString(),
                 }
               : item,
           ),
         );
       } finally {
-        await closeBrowserWriterSession(writerSession.sessionId);
+        try {
+          await closeBrowserWriterSession(writerSession.sessionId);
+        } catch {
+          // ignore session close error
+        }
       }
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Có lỗi không xác định";
-      markJob("Lỗi: " + errMsg, "loi");
-      setJobs((prev) =>
-        prev.map((item) =>
-          item.id === job.id
-            ? {
-                ...item,
-                message: errMsg,
-                updated_at: new Date().toISOString(),
-              }
-            : item,
-        ),
-      );
+    } catch (error: any) {
+      console.error(error);
+      markJob(error.message || "Lỗi tạo truyện", "loi");
     }
   };
 
   const runGenerate = async () => {
     if (isGenerating) return;
-    const queue = selectedJobs.length ? selectedJobs : jobs.filter((job) => job.status === "dang_cho");
-    if (!queue.length) {
-      setMessage("Không có bộ truyện đang chờ để tạo.");
+    const selected = jobs.filter((job) => selectedJobIds.includes(job.id));
+    if (!selected.length) {
+      setMessage("Chưa chọn bộ truyện nào để tạo.");
       return;
     }
-    if (!apiKeys.length) {
-      setMessage("Thiếu khóa API Reviewer truyện trong phần Cài đặt.");
-      return;
-    }
-    if (!apiUrl.trim()) {
-      setMessage("Thiếu địa chỉ API.");
-      return;
-    }
-    if (!reviewerModel.trim()) {
-      setMessage("Thiếu model reviewer.");
-      return;
-    }
-    if (!storyCookieJsonPath.trim()) {
-      setMessage("Thiếu file cookie JSON ChatGPT trong phần Cài đặt.");
-      return;
-    }
-    if (!sourcePool.length) {
-      setMessage("Chuưa có DNA nguồn trong thư viện để tạo truyện.");
+    const executable = selected.filter((job) => job.status !== "dang_chay");
+    if (!executable.length) {
+      setMessage("Các bộ truyện đã chọn đều đang chạy.");
       return;
     }
 
-    const requestedBatch = Math.min(15, Math.max(1, Math.round(batchSize || 1)));
-    const parallel = requestedBatch;
-    const queueIds = new Set(queue.map((job) => job.id));
     setIsGenerating(true);
-    setSelectedJobIds((prev) => prev.filter((id) => !queueIds.has(id)));
-    setMessage(
-      requestedBatch > 1
-        ? `Đang tạo ${queue.length} bộ truyện với ${parallel} luồng song song (Batch: ${requestedBatch}).`
-        : `Đang tạo ${queue.length} bộ truyện bằng Chromium writer.`
-    );
+    setMessage(`Bắt đầu tạo ${executable.length} bộ truyện...`);
 
-    let cursor = 0;
-    const workers = Array.from({ length: parallel }, async (_, workerIndex) => {
-      if (workerIndex > 0) {
-        await new Promise((r) => setTimeout(r, workerIndex * 5000));
-      }
-      while (true) {
-        const index = cursor;
-        cursor += 1;
-        if (index >= queue.length) return;
-        await generateOneJob(queue[index], workerIndex);
-      }
-    });
+    const pool = [...executable];
+    const poolSize = batchSize || 1;
+    const windowsCount = Math.min(poolSize, pool.length);
+    const activeTasks: Promise<void>[] = [];
 
-    await Promise.all(workers);
+    for (let i = 0; i < windowsCount; i++) {
+      const task = (async () => {
+        while (pool.length > 0) {
+          const job = pool.shift();
+          if (job) {
+             await generateOneJob(job, i);
+          }
+        }
+      })();
+      activeTasks.push(task);
+    }
+
+    await Promise.all(activeTasks);
     setIsGenerating(false);
-    setMessage("Đã hoàn tất tiến trình tạo truyện.");
+    setMessage(`Đã chạy xong hàng đợi.`);
   };
+
   const copyActiveOutput = async () => {
-    if (!activeJob?.output_json.trim()) return;
+    if (!activeJob?.output_json) return;
     try {
-      await navigator.clipboard.writeText(activeJob.output_json);
-      setMessage("Đã sao chép kết quả JSON.");
-    } catch {
-      setMessage("Không thể sao chép vào clipboard.");
+      const text = buildStoryTextFromOutput(activeJob.output_json);
+      await navigator.clipboard.writeText(text);
+      setMessage("Đã sao chép nội dung truyện vào Clipboard.");
+    } catch (e: any) {
+      setMessage(`Không sao chép được: ${e.message}`);
     }
   };
 
   const openActiveOutputFolder = async () => {
-    if (!activeJob?.output_directory) {
-      setMessage("Bộ truyện này chưa có thư mục lưu cục bộ.");
-      return;
-    }
+    if (!activeJob?.output_directory) return;
     try {
       await openPathInExplorer(activeJob.output_directory);
-      setMessage(`Đã mở thư mục truyện: ${activeJob.output_directory}`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Không mở được thư mục truyện.");
+    } catch {
+      setMessage("Không mở được thư mục.");
     }
   };
 
   const viewActiveStory = () => {
-    if (!activeJob?.output_json.trim()) {
-      setMessage("Bộ truyện này chưa có kết quả để xem.");
-      return;
-    }
+    if (!activeJob?.output_json) return;
     try {
-      const fullText = buildStoryTextFromOutput(activeJob.output_json);
+      const text = buildStoryTextFromOutput(activeJob.output_json);
+      setStoryViewerContent(text);
       setStoryViewerError("");
-      setStoryViewerContent(fullText);
-      setOpenStoryViewer(true);
-    } catch (error) {
-      setStoryViewerContent("");
-      setStoryViewerError(error instanceof Error ? error.message : "Không đọc được nội dung truyện.");
-      setOpenStoryViewer(true);
+    } catch (e: any) {
+      setStoryViewerError(e.message);
     }
+    setOpenStoryViewer(true);
   };
 
   return (
-    <section className="blueprint-view story-builder-view">
-      <header className="story-head">
-        <div>
-          <p className="breadcrumb">AUTO STORIES &gt; TẠO TRUYỆN</p>
-          <h1>Tạo truyện từ DNA</h1>
-        </div>
-      </header>
-
-      <div className="api-runtime-strip">
-        <span className="runtime-label">API: {apiUrl || "-"}</span>
-        <span className="runtime-label border-l pl-3">AI Review: <strong style={{ color: useStoryReviewer ? "#10b981" : "#9ca3af" }}>{useStoryReviewer ? "Bật" : "Tắt"}</strong></span>
-        <span className="runtime-label border-l pl-3">Model reviewer: <strong className="text-white">{reviewerModel || "Chưa chọn"}</strong></span>
-        <span className="runtime-label border-l pl-3">
-          Batch: <span className="status-badge" style={{ backgroundColor: "rgba(245, 158, 11, 0.2)", color: "#f59e0b", border: "1px solid rgba(245, 158, 11, 0.4)" }}>
-            {Math.min(5, Math.max(1, Math.round(batchSize || 1)))}
-          </span>
-        </span>
-        <span className="runtime-label border-l pl-3">
-          Keys: <span className="status-badge" style={{ backgroundColor: "rgba(99, 102, 241, 0.2)", color: "#818cf8", border: "1px solid rgba(99, 102, 241, 0.4)" }}>
-            {apiKeys.length}
-          </span>
-        </span>
-        <span className="runtime-label border-l pl-3">
-          Chrome đang mở: <span className={`status-badge ${activeSessionCount > 0 ? "glow-active" : ""}`} style={{ 
-            backgroundColor: activeSessionCount > 0 ? "rgba(16, 185, 129, 0.2)" : "rgba(107, 114, 128, 0.2)", 
-            color: activeSessionCount > 0 ? "#10b981" : "#9ca3af",
-            border: `1px solid ${activeSessionCount > 0 ? "rgba(16, 185, 129, 0.4)" : "rgba(107, 114, 128, 0.3)"}` 
-          }}>
-            {activeSessionCount}
-          </span>
-        </span>
-        <span className="runtime-label border-l pl-3 truncate max-w-xs">Lưu: {storyStoragePath.trim() || "Mặc định"}</span>
+    <section className="story-blueprint-view">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px", marginTop: "1rem" }}>
+        <span className="blueprint-notes" style={{ margin: 0 }}>JSON đầu vào (mỗi lần thêm là 1 bộ truyện)</span>
+        <label className="flex items-center gap-2 select-none" style={{ cursor: "pointer", fontSize: "13px", color: "var(--text-3)" }}>
+          <input type="checkbox" checked={useMatchedDna} onChange={e => setUseMatchedDna(e.target.checked)} />
+          Dùng DNA tham chiếu đã khớp
+        </label>
       </div>
-
-      <section className={`story-runtime-selectors ${!useStoryReviewer ? "reviewer-disabled" : ""}`}>
-        <div className="story-runtime-field">
-          <span className="field-label">Thông thái (AI Review)</span>
-          <div className="flex items-center gap-3">
-            <button 
-              type="button" 
-              className={`toggle-switch-large ${useStoryReviewer ? "active" : ""}`}
-              onClick={() => onToggleReviewer(!useStoryReviewer)}
-              title={useStoryReviewer ? "Đang bật Review & Sửa chương" : "Đã tắt Review (Tăng tốc độ tối đa)"}
-            >
-              <div className="toggle-knob" />
-            </button>
-            <span className={`status-text ${useStoryReviewer ? "text-active" : "text-inactive"}`}>
-              {useStoryReviewer ? "BẬT: Check logic & văn phong" : "TẮT: Viết bản thảo thô"}
-            </span>
-          </div>
-        </div>
-
-        <div className="runtime-group-divider" />
-
-        <label className={`story-runtime-field ${!useStoryReviewer ? "opacity-40 pointer-events-none" : ""}`}>
-          <span className="field-label">Hãng AI Reviewer</span>
-          <CustomSelect
-            value={reviewerVendor}
-            options={vendorOptions}
-            onChange={onSelectReviewerVendor}
-            placeholder="Chọn hãng"
-            disabled={!useStoryReviewer}
-            className="settings-custom-select story-runtime-select"
-          />
-        </label>
-        
-        <label className={`story-runtime-field ${!useStoryReviewer ? "opacity-40 pointer-events-none" : ""}`}>
-          <span className="field-label">Model Reviewer</span>
-          <CustomSelect
-            value={reviewerModel}
-            options={reviewerModelOptions}
-            onChange={onSelectReviewerModel}
-            placeholder={reviewerVendor ? "Chọn model" : "Chọn hãng trước"}
-            disabled={!useStoryReviewer || !reviewerVendor}
-            className="settings-custom-select story-runtime-select"
-          />
-        </label>
-      </section>
-
-      <label className="blueprint-notes">
-        JSON đầu vào (mỗi lần thêm là 1 bộ truyện)
-        <textarea value={jsonInput} onChange={(event) => setJsonInput(event.target.value)} className="story-input-area story-json-input" />
-      </label>
+      <textarea value={jsonInput} onChange={(event) => setJsonInput(event.target.value)} className="story-input-area story-json-input" />
 
       <div className="story-hints">
         <span>{jobs.length} bộ truyện trong hàng đợi</span>
         <span>{selectedJobIds.length} bộ truyện đã chọn</span>
         <span className={previewDnaIds.length > 0 ? "text-brand-400 font-bold glow-hint" : ""}>
-          Khớp: {previewDnaIds.length > 0 ? previewDnaIds.map(id => sourceById.get(id)?.title || id).join(", ") : "Chưa khớp DNA nào"}
+          Khớp DNA: {previewDnaIds.length > 0 ? previewDnaIds.map(id => sourceById.get(id)?.title || id).join(", ") : (useMatchedDna ? "Chưa khớp" : "Đã tắt")}
         </span>
         <span>{sourcePool.length} DNA sẵn sàng để ghép</span>
         <span>{factors.length} yếu tố trong thư viện</span>
@@ -1050,7 +904,10 @@ export function StoryBlueprintView({
                       <td>{job.active_factor_keys.length}</td>
                       <td>
                         <div className="story-status-cell">
-                          <span className={`story-status ${job.status}`}>{statusLabelMap[job.status]}</span>
+                          <span className={`story-status ${job.status}`}>
+                            {statusLabelMap[job.status]}
+                            {job.status === "dang_chay" && <LoaderCircle size={12} className="spin" style={{ marginLeft: "4px", display: "inline-block", verticalAlign: "middle" }} />}
+                          </span>
                           <small>{job.statusDetail || statusDefaultDetail(job.status)}</small>
                         </div>
                       </td>
@@ -1257,52 +1114,116 @@ export function StoryBlueprintView({
 
       {openRuntimeConfig ? (
         <div className="modal-backdrop" onClick={() => setOpenRuntimeConfig(false)}>
-          <div className="modal-card story-runtime-modal" onClick={(event) => event.stopPropagation()}>
-            <header>
-              <h3>Cài đặt tạo truyện</h3>
-              <button type="button" className="icon-square" onClick={() => setOpenRuntimeConfig(false)} aria-label="Đóng cài đặt tạo truyện">
-                <X size={16} />
+          <div 
+            className="modal-card story-runtime-modal" 
+            onClick={(event) => event.stopPropagation()}
+            style={{ width: "600px", maxWidth: "95vw", borderRadius: "16px", padding: 0 }}
+          >
+            <header style={{ padding: "1.5rem", borderBottom: "1px solid var(--border-1)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{ padding: "8px", borderRadius: "8px", background: "rgba(255, 107, 107, 0.1)", color: "#ff6b6b" }}>
+                  <Settings2 size={20} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "1.2rem" }}>Cài đặt Tạo Truyện</h3>
+                  <small style={{ color: "var(--text-3)" }}>Cấu hình Model Reviewer & Prompt hệ thống</small>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                className="icon-square" 
+                onClick={() => setOpenRuntimeConfig(false)}
+                style={{ position: "absolute", right: "20px", top: "20px" }}
+              >
+                <X size={18} />
               </button>
             </header>
 
-            <div className="runtime-model-grid runtime-model-pair-grid">
-              <div className="runtime-model-card">
-                <h4>Hệ thống viết truyện</h4>
-                <div className="runtime-status-info">
-                  <p>Hệ thống hiện đang sử dụng <strong>Chromium Writer</strong> (ChatGPT) để viết nội dung chính. Không cần cấu hình Model API cho tác vụ này.</p>
+            <div style={{ padding: "1.5rem", maxHeight: "65vh", overflowY: "auto" }} className="custom-scrollbar">
+              <div className="runtime-model-grid runtime-model-pair-grid" style={{ gap: "20px" }}>
+                <div className="runtime-model-card" style={{ border: "1px solid var(--border-1)", borderRadius: "12px", background: "rgba(255,255,255,0.02)" }}>
+                  <h4 style={{ color: "var(--text-2)", marginBottom: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <Bot size={16} /> Hệ thống viết truyện
+                  </h4>
+                  <div className="runtime-status-info" style={{ fontSize: "0.85rem", color: "var(--text-3)", lineHeight: "1.6" }}>
+                    Sử dụng <strong>Chromium Writer</strong> (ChatGPT) để viết nội dung. Đảm bảo bạn đã login trên Chrome.
+                  </div>
+                </div>
+
+                <div className="runtime-model-card" style={{ border: "1px solid var(--border-1)", borderRadius: "12px", background: "rgba(255,255,255,0.02)" }}>
+                  <h4 style={{ color: "var(--text-2)", marginBottom: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <LayoutDashboard size={16} /> Model Reviewer
+                  </h4>
+                  <div className="runtime-model-inline" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                    <label style={{ margin: 0 }}>
+                      <span style={{ fontSize: "0.8rem", color: "var(--text-3)", marginBottom: "4px", display: "block" }}>Hãng AI</span>
+                      <CustomSelect
+                        value={reviewerVendor}
+                        options={vendorOptions}
+                        onChange={onSelectReviewerVendor}
+                        placeholder="Chọn hãng"
+                        className="settings-custom-select"
+                      />
+                    </label>
+                    <label style={{ margin: 0 }}>
+                      <span style={{ fontSize: "0.8rem", color: "var(--text-3)", marginBottom: "4px", display: "block" }}>Model</span>
+                      <CustomSelect
+                        value={reviewerModel}
+                        options={reviewerModelOptions}
+                        onChange={onSelectReviewerModel}
+                        placeholder={reviewerVendor ? "Chọn model" : "Chọn hãng trước"}
+                        disabled={!reviewerVendor}
+                        className="settings-custom-select"
+                      />
+                    </label>
+                  </div>
                 </div>
               </div>
 
-              <div className="runtime-model-card">
-                <h4>Model reviewer</h4>
-                <div className="runtime-model-inline">
-                  <label>
-                    Hãng AI
-                    <CustomSelect
-                      value={reviewerVendor}
-                      options={vendorOptions}
-                      onChange={onSelectReviewerVendor}
-                      placeholder="Chọn hãng"
-                      className="settings-custom-select"
-                    />
-                  </label>
-                  <label>
-                    Model
-                    <CustomSelect
-                      value={reviewerModel}
-                      options={reviewerModelOptions}
-                      onChange={onSelectReviewerModel}
-                      placeholder={reviewerVendor ? "Chọn model" : "Chọn hãng trước"}
-                      disabled={!reviewerVendor}
-                      className="settings-custom-select"
-                    />
-                  </label>
+              <div style={{ marginTop: "2rem" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+                  <h4 style={{ margin: 0, fontSize: "0.95rem", color: "var(--text-2)", display: "flex", alignItems: "center", gap: "8px" }}>
+                     <Sparkles size={16} /> Tùy chỉnh Prompt hệ thống
+                  </h4>
+                  <button 
+                    type="button" 
+                    className={`ghost-btn compact ${showPromptEditor ? "text-brand-400" : ""}`}
+                    onClick={() => setShowPromptEditor(!showPromptEditor)}
+                  >
+                    {showPromptEditor ? "Ẩn editor" : "Mở Prompt Editor"}
+                  </button>
                 </div>
+
+                {showPromptEditor && (
+                  <div style={{ animation: "fadeIn 0.2s ease-out" }}>
+                    <p style={{ fontSize: "0.8rem", color: "var(--text-3)", marginBottom: "8px" }}>
+                      Ghi đè System Prompt cho Writer. Để trống sẽ dùng mặc định (Senior Horror Writer).
+                    </p>
+                    <textarea 
+                      value={customStoryPrompt} 
+                      onChange={(e) => setCustomStoryPrompt(e.target.value)}
+                      placeholder="Ghi đè phong cách viết truyện tại đây..."
+                      style={{ 
+                        width: "100%", 
+                        minHeight: "180px", 
+                        background: "var(--bg-3)", 
+                        border: "1px solid var(--border-1)", 
+                        borderRadius: "12px", 
+                        padding: "12px",
+                        color: "var(--text-1)",
+                        fontSize: "0.85rem",
+                        lineHeight: "1.5",
+                        resize: "vertical",
+                        fontFamily: "monospace"
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             </div>
 
-            <footer>
-              <button type="button" className="primary-btn" onClick={() => setOpenRuntimeConfig(false)}>
+            <footer style={{ padding: "1.2rem 1.5rem", borderTop: "1px solid var(--border-1)", display: "flex", gap: "12px" }}>
+              <button type="button" className="primary-btn" onClick={() => setOpenRuntimeConfig(false)} style={{ width: "100%", padding: "10px" }}>
                 Lưu và đóng
               </button>
             </footer>

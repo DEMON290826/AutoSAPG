@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { AlertTriangle, CheckCircle2, Clock3, Database, FolderPlus, LoaderCircle, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { AlertTriangle, Bot, BrainCircuit, CheckCircle2, Clock3, Database, FolderPlus, LayoutDashboard, LoaderCircle, Plus, Settings2, Sparkles, Trash2, WandSparkles, X } from "lucide-react";
 import { CustomSelect } from "../components/CustomSelect";
-import { analyzeStoryWithBeeApi } from "../dna/analysisApi";
+import { analyzeStoryWithBeeApi, analyzeStoryWithBrowser } from "../dna/analysisApi";
 import { isLocalDnaPersistenceAvailable, saveStoryDnaToLibrary } from "../dna/dnaStorage";
+import { startBrowserWriterSession, sendBrowserWriterPrompt, closeBrowserWriterSession, getBrowserWriterSessionCount, closeBrowserAllSessions } from "../utils/electronBridge";
 import type { StoryCreateMode, StoryFileType, StorySourceStatus } from "../dna/analysisTypes";
 import type { DnaEntry } from "../dna/types";
 import type { ModelRegistryItem } from "../types/appSettings";
@@ -32,6 +33,14 @@ type StorySourceRow = {
   errorMessage: string;
 };
 
+type GptTasks = {
+  blueprint: boolean;
+  style: boolean;
+  logic: boolean;
+  evaluation: boolean;
+  improvement: boolean;
+};
+
 type Props = {
   onSavedEntry: (entry: DnaEntry) => void;
   apiKey: string;
@@ -51,6 +60,8 @@ type PersistedCreatorState = {
   selectedSourceId: string;
   authorNameDraft: string;
   libraryDir: string;
+  useGpt?: boolean;
+  gptTasks?: GptTasks;
 };
 
 const viNumber = new Intl.NumberFormat("vi-VN");
@@ -214,6 +225,14 @@ export function StoryCreateView({ onSavedEntry, apiKey, apiUrl, dnaStoragePath, 
   const [analysisDone, setAnalysisDone] = useState(0);
   const [analysisTotal, setAnalysisTotal] = useState(0);
   const [analysisCurrentTitle, setAnalysisCurrentTitle] = useState("");
+  const [useGpt, setUseGpt] = useState(() => persistedState?.useGpt ?? false);
+  const [gptTasks, setGptTasks] = useState<GptTasks>(() => persistedState?.gptTasks ?? {
+    blueprint: true, style: true, logic: true, evaluation: true, improvement: true
+  });
+  const [openGptSettingsModal, setOpenGptSettingsModal] = useState(false);
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState(() => persistedState?.gptTasks ? (persistedState as any).customPrompt ?? "" : "");
+  const stopRequestedRef = useRef(false);
 
   const sourceFileInputRef = useRef<HTMLInputElement>(null);
   const authorFolderInputRef = useRef<HTMLInputElement>(null);
@@ -253,8 +272,11 @@ export function StoryCreateView({ onSavedEntry, apiKey, apiUrl, dnaStoragePath, 
       selectedSourceId,
       authorNameDraft,
       libraryDir,
+      useGpt,
+      gptTasks,
+      customPrompt,
     });
-  }, [sources, selectedSourceIds, selectedSourceId, authorNameDraft, libraryDir]);
+  }, [sources, selectedSourceIds, selectedSourceId, authorNameDraft, libraryDir, useGpt, gptTasks, customPrompt]);
 
   useEffect(() => {
     if (!sources.length) {
@@ -484,41 +506,174 @@ export function StoryCreateView({ onSavedEntry, apiKey, apiUrl, dnaStoragePath, 
     }
   };
 
+  const analyzeOneSourceWithBrowser = async (source: StorySourceRow, sid: string): Promise<void> => {
+    setAnalysisCurrentTitle(source.title);
+    setSources((prev) =>
+      prev.map((item) =>
+        item.id === source.id
+          ? { ...item, status: "dang_chay", statusDetail: "GPT đang phân tích truyện...", errorMessage: "" }
+          : item
+      )
+    );
+
+    try {
+      const sendPrompt = async (p: string, isFirstCall = true) => {
+        return sendBrowserWriterPrompt({ sessionId: sid, prompt: p, newConversation: isFirstCall, timeoutMs: 1800000 });
+      };
+
+      const analysis = await analyzeStoryWithBrowser({
+        title: source.title,
+        content: source.content,
+        createMode: source.createMode,
+        gptTasks,
+        customDnaPrompt: customPrompt,
+        onProgress: (pMessage) => {
+           setSources((prev) =>
+             prev.map((i) =>
+               i.id === source.id
+                 ? { ...i, statusDetail: pMessage }
+                 : i
+             )
+           );
+        }
+      }, sendPrompt);
+
+      const saveResult = saveStoryDnaToLibrary({
+        title: source.title,
+        storyContent: source.content,
+        createMode: source.createMode,
+        fileType: source.fileType,
+        authorName: source.authorName,
+        sourcePath: source.sourcePath,
+        storageDir: dnaStoragePath,
+        analysis,
+      });
+      recordMetric("dna_created", 1);
+
+      onSavedEntry(saveResult.entry);
+      setSources((prev) =>
+        prev.map((item) =>
+          item.id === source.id
+            ? {
+                ...item,
+                status: "xong",
+                statusDetail: `GPT hoàn tất (${saveResult.entry.dna_id})`,
+                mainGenre: formatCategoryName(saveResult.entry.category),
+                mainStyle: analysis.main_style,
+                score: analysis.score_report.overall_score.score,
+                dnaSaved: true,
+                dnaId: saveResult.entry.dna_id,
+                dnaDirectory: saveResult.dnaDirectory,
+                summary: analysis.story_summary,
+              }
+            : item
+        )
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Lỗi GPT";
+      setSources((prev) =>
+        prev.map((item) =>
+          item.id === source.id ? { ...item, status: "loi", statusDetail: `Lỗi GPT: ${msg.slice(0, 80)}`, errorMessage: msg } : item
+        )
+      );
+      if (msg.includes("Nodriver bridge") || msg.includes("Session") || msg.includes("process is dead")) {
+        throw error;
+      }
+    } finally {
+      setAnalysisDone((prev) => prev + 1);
+    }
+  };
+
+  const handleStopAnalyze = async () => {
+    stopRequestedRef.current = true;
+    try {
+      if (useGpt) {
+        await closeBrowserAllSessions();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    setIsAnalyzing(false);
+    setAnalyzeMessage("Đã dừng tiến trình phân tích theo yêu cầu.");
+    setSources((prev) =>
+      prev.map((item) =>
+        item.status === "dang_chay"
+          ? { ...item, status: "loi", statusDetail: "Đã dừng ép buộc", errorMessage: "Tiến trình bị hủy bởi người dùng" }
+          : item
+      )
+    );
+  };
+
   const runAnalyze = async () => {
     if (isAnalyzing) return;
+    stopRequestedRef.current = false;
     const queueCandidates = selectedSources.length ? selectedSources : sources.filter((source) => source.status === "dang_cho");
     if (!queueCandidates.length) {
       setAnalyzeMessage("Không có truyện đang chờ để phân tích.");
       return;
     }
-    if (!apiKey.trim()) {
-      setAnalyzeMessage("Thiếu khóa API Bee.");
-      return;
-    }
-    if (!apiUrl.trim()) {
-      setAnalyzeMessage("Thiếu địa chỉ API.");
-      return;
-    }
-    if (!selectedModel.trim()) {
-      setAnalyzeMessage("Thiếu model đã chọn trong mục Model.");
-      return;
+    if (!useGpt) {
+      if (!apiKey.trim()) {
+        setAnalyzeMessage("Thiếu khóa API Bee.");
+        return;
+      }
+      if (!apiUrl.trim()) {
+        setAnalyzeMessage("Thiếu địa chỉ API.");
+        return;
+      }
+      if (!selectedModel.trim()) {
+        setAnalyzeMessage("Thiếu model đã chọn trong mục Model.");
+        return;
+      }
     }
 
     const queue = [...queueCandidates];
     const queueIds = new Set(queue.map((item) => item.id));
-    const parallel = Math.min(5, Math.max(1, Math.round(batchSize || 1)), queue.length);
-
-    setAnalyzeMessage("");
+    
     setIsAnalyzing(true);
     setAnalysisDone(0);
     setAnalysisTotal(queue.length);
-    setAnalysisCurrentTitle(queue[0]?.title ?? "");
     setSelectedSourceIds((prev) => prev.filter((id) => !queueIds.has(id)));
-    setAnalyzeMessage(`Đã bắt đầu phân tích ${queue.length} truyện với batch ${parallel}.`);
+
+    const parallel = Math.min(15, Math.max(1, Math.round(batchSize || 1)), queue.length);
+
+    if (useGpt) {
+      setAnalyzeMessage(`Đang mở ${parallel} luồng trình duyệt ChatGPT cho ${queue.length} truyện...`);
+      try {
+        const settings = readJsonStorage<any>("app.settings", {});
+        const cookiePath = settings.storyCookieJsonPath;
+        if (!cookiePath) throw new Error("Chưa cấu hình Cookie ChatGPT trong Cài đặt.");
+        if (stopRequestedRef.current) throw new Error("Đã dừng trước khi chạy.");
+
+        let cursor = 0;
+        const workers = Array.from({ length: parallel }, async (_, workerIndex) => {
+          const session = await startBrowserWriterSession({ cookieFilePath: cookiePath, windowIndex: workerIndex });
+          const sid = session.sessionId;
+
+          while (true) {
+            if (stopRequestedRef.current) break;
+            const currentIndex = cursor;
+            cursor += 1;
+            if (currentIndex >= queue.length) return;
+            await analyzeOneSourceWithBrowser(queue[currentIndex], sid);
+          }
+        });
+
+        await Promise.all(workers);
+      } catch (error: any) {
+        setAnalyzeMessage(`Lỗi: ${error.message}`);
+      } finally {
+        setIsAnalyzing(false);
+      }
+      return;
+    }
+
+    setAnalyzeMessage(`Đã bắt đầu API cho ${queue.length} truyện chạy song song.`);
 
     let cursor = 0;
     const workers = Array.from({ length: parallel }, async () => {
       while (true) {
+        if (stopRequestedRef.current) break;
         const currentIndex = cursor;
         cursor += 1;
         if (currentIndex >= queue.length) return;
@@ -536,7 +691,23 @@ export function StoryCreateView({ onSavedEntry, apiKey, apiUrl, dnaStoragePath, 
       <header className="story-head">
         <div>
           <p className="breadcrumb">Auto Stories &gt; Tạo DNA</p>
-          <h1>Tạo DNA từ truyện nguồn</h1>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <h1>Tạo DNA từ truyện nguồn</h1>
+            <button 
+              type="button" 
+              className={`gpt-toggle-btn ${useGpt ? "active primary-btn" : ""}`}
+              onClick={() => setUseGpt(!useGpt)}
+              title="Sử dụng trình duyệt ChatGPT để phân tích thay vì API"
+              style={
+                useGpt
+                  ? { backgroundColor: "var(--primary-color)", color: "white", padding: "4px 12px", minWidth: "135px", fontSize: "12px", boxShadow: "0 4px 12px rgba(255,107,107,0.3)" }
+                  : { backgroundColor: "var(--bg-3)", color: "var(--text-2)", padding: "4px 12px", minWidth: "135px", fontSize: "12px" }
+              }
+            >
+              <Sparkles size={14} style={{ marginRight: "4px" }} />
+              Dùng GPT {useGpt ? "ON" : "OFF"}
+            </button>
+          </div>
         </div>
         <div className="story-head-actions">
           <button type="button" className="ghost-btn" onClick={handlePickSourceFiles}>
@@ -555,10 +726,24 @@ export function StoryCreateView({ onSavedEntry, apiKey, apiUrl, dnaStoragePath, 
             <Trash2 size={14} />
             Dọn tất cả
           </button>
-          <button type="button" className={`primary-btn ${isAnalyzing ? "is-disabled" : ""}`} onClick={runAnalyze} disabled={isAnalyzing}>
-            {isAnalyzing ? <LoaderCircle size={15} className="spin" /> : <Sparkles size={15} />}
-            {isAnalyzing ? "Đang phân tích..." : "Phân tích đã chọn"}
-          </button>
+          {isAnalyzing ? (
+            <button type="button" className="danger-btn" onClick={handleStopAnalyze}>
+              <X size={15} />
+              Dừng quá trình
+            </button>
+          ) : (
+            <div style={{ display: "flex", gap: "8px" }}>
+              {useGpt ? (
+                 <button type="button" className="ghost-btn compact" onClick={() => setOpenGptSettingsModal(true)}>
+                   <Settings2 size={16} />
+                 </button>
+              ) : null}
+              <button type="button" className="primary-btn" onClick={runAnalyze}>
+                <Sparkles size={15} />
+                Phân tích đã chọn
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -566,10 +751,16 @@ export function StoryCreateView({ onSavedEntry, apiKey, apiUrl, dnaStoragePath, 
       <input ref={authorFolderInputRef} type="file" multiple style={{ display: "none" }} onChange={handleAuthorFolderInputChange} />
 
       <div className="api-runtime-strip">
-        <span>API: {apiUrl || "-"}</span>
-        <span>Model: {selectedModel || "Chưa chọn model"}</span>
-        <span>Batch: {Math.min(5, Math.max(1, Math.round(batchSize || 1)))}</span>
-        <span>Key DNA: {apiKey ? "Đã cấu hình" : "Chưa cấu hình"}</span>
+        {useGpt ? (
+          <span style={{ color: "#10a37f", fontWeight: "bold" }}>Chế độ: Chat Browser (Ưu tiên chất lượng DNA)</span>
+        ) : (
+          <>
+            <span>API: {apiUrl || "-"}</span>
+            <span>Model: {selectedModel || "Chưa chọn model"}</span>
+            <span>Batch: {Math.min(5, Math.max(1, Math.round(batchSize || 1)))}</span>
+            <span>Key DNA: {apiKey ? "Đã cấu hình" : "Chưa cấu hình"}</span>
+          </>
+        )}
         <span>Lưu DNA: {dnaStoragePath.trim() || "Mặc định (Documents/DNA_Library)"}</span>
       </div>
 
@@ -684,7 +875,10 @@ export function StoryCreateView({ onSavedEntry, apiKey, apiUrl, dnaStoragePath, 
                     <td>{modeLabel(source.createMode, source.authorName)}</td>
                     <td>
                       <div className="story-status-cell">
-                        <span className={`story-status ${source.status}`}>{storyStatusLabel(source.status)}</span>
+                        <span className={`story-status ${source.status}`}>
+                          {storyStatusLabel(source.status)}
+                          {source.status === "dang_chay" && <LoaderCircle size={12} className="spin" style={{ marginLeft: "4px", display: "inline-block", verticalAlign: "middle" }} />}
+                        </span>
                         <small>{storyStatusDetail(source.status, source)}</small>
                       </div>
                     </td>
@@ -727,6 +921,124 @@ export function StoryCreateView({ onSavedEntry, apiKey, apiUrl, dnaStoragePath, 
           </div>
         </div>
       ) : null}
+
+      {openGptSettingsModal ? (
+        <div className="modal-backdrop" onClick={() => setOpenGptSettingsModal(false)}>
+          <div 
+            className="modal-card story-runtime-modal" 
+            onClick={(event) => event.stopPropagation()} 
+            style={{ width: "550px", maxWidth: "95vw", borderRadius: "16px", padding: 0 }}
+          >
+            <header style={{ padding: "1.5rem", borderBottom: "1px solid var(--border-1)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{ padding: "8px", borderRadius: "8px", background: "rgba(16, 163, 127, 0.1)", color: "#10a37f" }}>
+                  <Bot size={20} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "1.2rem" }}>Cài đặt Phân tích DNA</h3>
+                  <small style={{ color: "var(--text-3)" }}>Tùy chỉnh các bước xử lý của GPT Browser</small>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                className="icon-square" 
+                onClick={() => setOpenGptSettingsModal(false)}
+                style={{ position: "absolute", right: "20px", top: "20px" }}
+              >
+                <X size={18} />
+              </button>
+            </header>
+
+            <div style={{ padding: "1.5rem", maxHeight: "60vh", overflowY: "auto" }} className="custom-scrollbar">
+               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "1.5rem" }}>
+                 {[
+                   { key: "blueprint", id: "dna-bp", label: "Sườn truyện", icon: <Database size={14} /> },
+                   { key: "style", id: "dna-st", label: "Văn phong", icon: <Sparkles size={14} /> },
+                   { key: "logic", id: "dna-lg", label: "Logic cốt truyện", icon: <BrainCircuit size={14} /> },
+                   { key: "improvement", id: "dna-im", label: "Định hướng cải thiện", icon: <WandSparkles size={14} /> },
+                   { key: "evaluation", id: "dna-ev", label: "Chấm điểm (JSON)", icon: <LayoutDashboard size={14} /> },
+                 ].map((t) => (
+                   <label 
+                     key={t.key} 
+                     className={`flex items-center gap-3 p-3 rounded-xl border transition-all select-none hover:bg-white/5 cursor-pointer ${gptTasks[t.key as keyof GptTasks] ? "border-brand-500 bg-brand-500/5" : "border-ui-700 bg-transparent"}`}
+                   >
+                     <input 
+                       type="checkbox" 
+                       className="hidden-checkbox"
+                       checked={gptTasks[t.key as keyof GptTasks]} 
+                       onChange={(e) => setGptTasks(p => ({ ...p, [t.key]: e.target.checked }))} 
+                     />
+                     <div className={`p-1.5 rounded-lg ${gptTasks[t.key as keyof GptTasks] ? "text-brand-400 bg-brand-500/10" : "text-ui-400 bg-ui-800"}`}>
+                       {t.icon}
+                     </div>
+                     <span style={{ fontSize: "0.9rem", color: gptTasks[t.key as keyof GptTasks] ? "var(--text-1)" : "var(--text-2)" }}>{t.label}</span>
+                   </label>
+                 ))}
+               </div>
+
+               <div className="runtime-model-divider" style={{ margin: "1.5rem 0", height: "1px", background: "linear-gradient(to right, transparent, var(--border-1), transparent)" }} />
+
+               <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <h4 style={{ margin: 0, fontSize: "0.95rem", color: "var(--text-2)" }}>Prompt hệ thống</h4>
+                    <button 
+                      type="button" 
+                      className={`ghost-btn compact ${showPromptEditor ? "text-brand-400" : ""}`}
+                      onClick={() => setShowPromptEditor(!showPromptEditor)}
+                    >
+                      {showPromptEditor ? "Ẩn công cụ" : "Tùy chỉnh Prompt"}
+                    </button>
+                  </div>
+
+                  {showPromptEditor && (
+                    <div className="prompt-editor-box" style={{ animation: "fadeIn 0.2s ease-out" }}>
+                      <p style={{ fontSize: "0.8rem", color: "var(--text-3)", marginBottom: "8px" }}>
+                        Bạn có thể ghi đè Prompt hệ thống tại đây. Để trống sẽ dùng Prompt mặc định của App.
+                      </p>
+                      <textarea 
+                        value={customPrompt} 
+                        onChange={(e) => setCustomPrompt(e.target.value)}
+                        placeholder="Ví dụ: Chỉ tập trung phân tích bối cảnh làng quê Việt Nam..."
+                        style={{ 
+                          width: "100%", 
+                          minHeight: "150px", 
+                          background: "var(--bg-3)", 
+                          border: "1px solid var(--border-1)", 
+                          borderRadius: "12px", 
+                          padding: "12px",
+                          color: "var(--text-1)",
+                          fontSize: "0.85rem",
+                          lineHeight: "1.5",
+                          resize: "vertical"
+                        }}
+                      />
+                    </div>
+                  )}
+               </div>
+            </div>
+
+            <footer style={{ padding: "1.2rem 1.5rem", borderTop: "1px solid var(--border-1)", display: "flex", gap: "12px" }}>
+              <button 
+                type="button" 
+                className="ghost-btn" 
+                onClick={() => setOpenGptSettingsModal(false)}
+                style={{ flex: 1 }}
+              >
+                Hủy bỏ
+              </button>
+              <button 
+                type="button" 
+                className="primary-btn" 
+                onClick={() => setOpenGptSettingsModal(false)} 
+                style={{ flex: 2, padding: "10px" }}
+              >
+                Lưu cấu hình
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
+
     </section>
   );
 }

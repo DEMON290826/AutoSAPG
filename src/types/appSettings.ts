@@ -28,6 +28,8 @@ export type AppSettingsState = {
   useStoryReviewer: boolean;
   maxRetries: number;
   retryDelay: number;
+  dnaSystemPrompt?: string;
+  storySystemPrompt?: string;
 };
 
 export type ApiRuntimeStatus = "idle" | "testing" | "ok" | "error";

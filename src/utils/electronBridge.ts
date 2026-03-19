@@ -89,3 +89,12 @@ export function listenUpdateStatus(callback: (status: string) => void): () => vo
   };
 }
 
+export async function triggerUpdateCheck(): Promise<void> {
+  const ipc = (window.require?.("electron") as any)?.ipcRenderer;
+  if (ipc) {
+    await ipc.invoke("app:check-for-updates");
+  } else {
+    console.log("Not in electron environment");
+  }
+}
+

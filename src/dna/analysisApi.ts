@@ -7,6 +7,103 @@ const DEFAULT_BEE_MODEL = "openai/gpt-oss-120b";
 
 const DNA_SYSTEM_PROMPT = DNA_ANALYST_SYSTEM_PROMPT;
 
+export async function analyzeStoryWithBrowser(input: AnalyzeStoryInput, sendPrompt: (prompt: string, isFirstCall?: boolean) => Promise<string>): Promise<StoryAnalysisResult> {
+  let combinedMd = "";
+  let scoreReportJson = null;
+
+  const tasks = input.gptTasks ?? { blueprint: true, style: true, logic: true, evaluation: true, improvement: true };
+  let isFirst = true;
+  const shortContent = input.content.slice(0, 150000);
+  const promptPrefix = input.customDnaPrompt?.trim() ? `[Hướng dẫn hệ thống: ${input.customDnaPrompt}]\n\n` : "";
+
+  if (tasks.blueprint) {
+    input.onProgress?.("Đang phân tích sườn truyện (Blueprint)...");
+    const p = `${promptPrefix}Đọc truyện sau:\n\n${shortContent}\n\nYêu cầu: Hãy phân tích chi tiết sườn truyện (các nhân vật, bối cảnh, cốt lõi thông điệp, và các tình tiết chính). Viết tự nhiên, cực kỳ chi tiết rõ ràng, không cần trả về JSON.`;
+    const res = await sendPrompt(p, isFirst);
+    combinedMd += `\n\n## 1. Sườn truyện\n${res}`;
+    isFirst = false;
+  }
+
+  if (tasks.style) {
+    input.onProgress?.("Đang phân tích văn phong...");
+    const p = isFirst
+      ? `${promptPrefix}Đọc truyện sau:\n\n${shortContent}\n\nYêu cầu: Phân tích chi tiết Văn phong (ngôn từ, cách hành văn, yếu tố cảm xúc, cách xây dựng không khí). Viết tự nhiên, đầy đủ, không cần trả về JSON.`
+      : "Tiếp tục, phân tích chi tiết Văn phong của bộ truyện này (ngôn từ, cách hành văn, yếu tố cảm xúc, cách xây dựng không khí). Viết tự nhiên, không cần định dạng JSON.";
+    const res = await sendPrompt(p, isFirst);
+    combinedMd += `\n\n## 2. Văn phong\n${res}`;
+    isFirst = false;
+  }
+
+  if (tasks.logic) {
+    input.onProgress?.("Đang phân tích logic cốt truyện...");
+    const p = isFirst
+      ? `${promptPrefix}Đọc truyện sau:\n\n${shortContent}\n\nYêu cầu: Phân tích chi tiết cấu trúc Logic của truyện (cách xây dựng các nút thắt, giải quyết mâu thuẫn, mạch truyện). Viết tự nhiên dưới dạng văn bản.`
+      : "Tiếp theo, hãy phân tích chi tiết cấu trúc Logic của truyện (cách xây dựng các nút thắt, giải quyết mâu thuẫn, mạch truyện). Viết tự nhiên dưới dạng văn bản, không gửi JSON.";
+    const res = await sendPrompt(p, isFirst);
+    combinedMd += `\n\n## 3. Cấu trúc & Logic\n${res}`;
+    isFirst = false;
+  }
+
+  if (tasks.evaluation) {
+    input.onProgress?.("Đang đánh giá chấm điểm...");
+    const schemaScore = `{
+  "hook_strength": { "score": 8, "reason": "Lý do điểm..." },
+  "atmosphere": { "score": 8, "reason": "" },
+  "pacing": { "score": 8, "reason": "" },
+  "fear_factor": { "score": 8, "reason": "" },
+  "originality": { "score": 8, "reason": "" },
+  "character_depth": { "score": 8, "reason": "" },
+  "cinematic_quality": { "score": 8, "reason": "" },
+  "twist_power": { "score": 8, "reason": "" },
+  "memorability": { "score": 8, "reason": "" },
+  "reusability_as_dna": { "score": 8, "reason": "" },
+  "language_quality": { "score": 8, "reason": "" },
+  "language_identity": { "score": 8, "reason": "" },
+  "cinematic_identity": { "score": 8, "reason": "" },
+  "structural_integrity": { "score": 8, "reason": "" },
+  "emotional_impact": { "score": 8, "reason": "" },
+  "overall_score": { "score": 8, "reason": "" }
+}`;
+    const p = isFirst
+      ? `${promptPrefix}Đọc truyện sau:\n\n${shortContent}\n\nYêu cầu: Hãy Đánh giá và chấm điểm truyện theo các tiêu chí (từ 0.0 - 10.0) minh bạch, khắt khe. Trả về DUY NHẤT 1 ĐOẠN JSON CHUẨN (không giải thích thêm ngoài JSON):\n${schemaScore}`
+      : `Bây giờ, hãy Đánh giá và chấm điểm truyện theo các tiêu chí chuẩn. Trả về DUY NHẤT 1 ĐOẠN JSON CHUẨN CÓ CẤU TRÚC SAU (điểm từ 0.0-10.0, khắt khe, không ghi gì khác ngoài JSON):\n${schemaScore}`;
+    const res = await sendPrompt(p, isFirst);
+    scoreReportJson = parseJsonFromText(res);
+    isFirst = false;
+  }
+
+  if (tasks.improvement) {
+    input.onProgress?.("Đang phân tích cải thiện...");
+    const p = isFirst
+      ? `${promptPrefix}Đọc truyện sau:\n\n${shortContent}\n\nYêu cầu: Đưa ra nhận xét định hướng cải thiện và gợi ý cụ thể để làm tác phẩm xuất sắc hơn. Viết tự nhiên bằng Markdown.`
+      : "Cuối cùng, dựa trên toàn bộ phân tích, hãy đưa ra nhận xét cải thiện và gợi ý cấu trúc cốt truyện mới sao cho truyện xuất sắc hơn. Viết tự nhiên, không cần JSON.";
+    const res = await sendPrompt(p, isFirst);
+    combinedMd += `\n\n## 4. Định hướng cải thiện\n${res}`;
+    isFirst = false;
+  }
+
+  let extractJson: any = {};
+  if (!isFirst) {
+    input.onProgress?.("Đang trích xuất metadata DNA...");
+    const extPrompt = "Dựa vào truyện đã đọc ban đầu, hãy tóm tắt metadata thành DUY NHẤT 1 JSON (chỉ có schema này, không viết gì khác):\n{\"category\":\"truyen_ma\",\"sub_category\":\"tinh_cam\",\"tags\":[\"giau_kin\",\"bi_an\"],\"main_style\":\"u_am\",\"characters\":[{\"name\":\"\",\"role\":\"\",\"personality\":\"\",\"mission\":\"\"}]}";
+    const resObj = await sendPrompt(extPrompt, false);
+    extractJson = parseJsonFromText(resObj) || {};
+  } else {
+    throw new Error("Không có phân tích nào được bật cho GPT.");
+  }
+
+  return normalizeAnalysis(
+    {
+      dna_json: { ...extractJson, scores: scoreReportJson || {} },
+      improvement_json: {},
+      summary_md: combinedMd.trim(),
+      expert_commentary_md: combinedMd.trim(),
+    },
+    input.title,
+    input.content
+  );
+}
+
 const scoreKeys = [
   "hook_strength",
   "atmosphere",
@@ -34,6 +131,15 @@ export type AnalyzeStoryInput = {
   title: string;
   content: string;
   createMode: StoryCreateMode;
+  gptTasks?: {
+    blueprint: boolean;
+    style: boolean;
+    logic: boolean;
+    evaluation: boolean;
+    improvement: boolean;
+  };
+  customDnaPrompt?: string;
+  onProgress?: (msg: string) => void;
 };
 
 export type AnalyzeStoryOptions = {

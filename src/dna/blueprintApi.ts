@@ -1,6 +1,7 @@
 import { STORY_BLUEPRINT_SYSTEM_PROMPT } from "./prompts";
 import { recordMetric } from "../utils/metrics";
 import { sendBrowserWriterPrompt } from "../utils/electronBridge";
+import type { StoryFactorDefinition } from "./storyFactors";
 
 const DEFAULT_BEE_API_URL = "https://platform.beeknoee.com/api/v1/chat/completions";
 const DEFAULT_BEE_MODEL = "openai/gpt-oss-120b";
@@ -68,6 +69,7 @@ export type GenerateBlueprintOptions = {
   requirements: BlueprintRequirements;
   sources: BlueprintDnaSource[];
   activeFactors: StoryFactorDefinition[];
+  customStoryPrompt?: string;
 };
 
 export type GenerateBlueprintBrowserOptions = {
@@ -79,6 +81,7 @@ export type GenerateBlueprintBrowserOptions = {
   reviewerApiKey: string;
   reviewerApiUrl?: string;
   reviewerModel?: string;
+  customStoryPrompt?: string;
 };
 
 // Removed bad insertion
@@ -238,8 +241,6 @@ function buildUserPrompt(requirements: BlueprintRequirements, sources: Blueprint
   ].join("\n");
 }
 
-import type { StoryFactorDefinition } from "./storyFactors";
-
 function buildDnaBlueprintPrompt(requirements: BlueprintRequirements, sources: BlueprintDnaSource[], activeFactors: StoryFactorDefinition[]): string {
   const hasLayToanBo = activeFactors.some(f => f.key === "lay_toan_bo_dna");
   const hasLayVanPhong = activeFactors.some(f => f.key === "lay_van_phong");
@@ -299,8 +300,8 @@ function buildDnaBlueprintPrompt(requirements: BlueprintRequirements, sources: B
     "BẮT BUỘC: Viết dưới dạng văn bản tự nhiên, dạt dào cảm xúc và chi tiết. KHÔNG VIẾT JSON, không bọc code block.",
     "",
     "DNA KHÔNG PHẢI DỮ LIỆU THAM KHẢO LỎNG. DNA LÀ RÀNG BUỘC BẮT BUỘC.",
-    "Blueprint tạo ra phải truy được dấu vết rõ ràng từ ít nhất 3 DNA nguồn.",
-    "Ưu tiên DNA điểm cao, nhưng vẫn phải tôn trọng DNA gần thể loại và style yêu cầu nhất.",
+    sources.length > 0 ? "Blueprint tạo ra phải truy được dấu vết rõ ràng từ ít nhất 3 DNA nguồn." : "Blueprint này được thiết kế độc lập, không cần kế thừa từ DNA.",
+    sources.length > 0 ? "Ưu tiên DNA điểm cao, nhưng vẫn phải tôn trọng DNA gần thể loại và style yêu cầu nhất." : "",
     "Quy tắc kế thừa và đột biến:",
     "- DNA neo quyết định trục xung đột, động cơ vận hành và kiểu áp lực của truyện.",
     "- DNA hỗ trợ bổ sung motif, quy tắc sợ hãi, chất liệu không gian, văn phong và cách dẫn cao trào.",
@@ -334,7 +335,7 @@ function buildDnaBlueprintPrompt(requirements: BlueprintRequirements, sources: B
     JSON.stringify(scoreSortedIds, null, 2),
     "",
     "DNA nguon day du:",
-    JSON.stringify(filteredSources, null, 2),
+    sources.length > 0 ? JSON.stringify(filteredSources, null, 2) : "KHONG CO DNA THAM KHAO. Hay tu thiet ke mot concept moi hoan toan dua tren yeu cau nguoi dung.",
   ].join("\n");
 }
 
@@ -476,7 +477,6 @@ async function repairJsonWithModel(apiKey: string, apiUrl: string, model: string
 export async function generateStoryBlueprintWithBeeApi(options: GenerateBlueprintOptions): Promise<StoryBlueprintResult> {
   const apiKey = options.apiKey.trim();
   if (!apiKey) throw new Error("Thiếu API key.");
-  if (!options.sources.length) throw new Error("Chưa có DNA nguồn để tạo blueprint.");
 
   const apiUrl = (options.apiUrl ?? DEFAULT_BEE_API_URL).trim();
   const model = (options.model ?? DEFAULT_BEE_MODEL).trim();
@@ -545,8 +545,6 @@ export async function generateStoryBlueprintWithBeeApi(options: GenerateBlueprin
 
 export async function generateStoryBlueprintWithBrowser(options: GenerateBlueprintBrowserOptions): Promise<StoryBlueprintResult> {
   if (!options.writerSessionId.trim()) throw new Error("Thieu writerSessionId cho browser writer.");
-  if (!options.sources.length) throw new Error("Chua co DNA nguon de tao blueprint.");
-  if (!options.reviewerApiKey?.trim()) throw new Error("Thiếu API key cho Reviewer đánh giá Blueprint.");
 
   const chapterCount = Math.max(1, Math.round(options.requirements.chapter_count));
   const reviewerApiUrl = (options.reviewerApiUrl ?? DEFAULT_BEE_API_URL).trim();
@@ -560,7 +558,11 @@ export async function generateStoryBlueprintWithBrowser(options: GenerateBluepri
     const attemptLabel = attempt > 0 ? ` (lần sửa ${attempt})` : "";
     options.onProgress?.(`Đang tạo Sườn truyện (văn bản) bằng ChatGPT${attemptLabel}...`);
 
-    let promptArr = [STORY_BLUEPRINT_SYSTEM_PROMPT, "", buildDnaBlueprintPrompt(options.requirements, options.sources, options.activeFactors)];
+    const systemPromptToUse = options.customStoryPrompt?.trim()
+      ? `[HƯỚNG DẪN HỆ THỐNG ƯU TIÊN: ${options.customStoryPrompt.trim()}]\n\n${STORY_BLUEPRINT_SYSTEM_PROMPT}`
+      : STORY_BLUEPRINT_SYSTEM_PROMPT;
+
+    let promptArr = [systemPromptToUse, "", buildDnaBlueprintPrompt(options.requirements, options.sources, options.activeFactors)];
     if (carryGuidance) {
       promptArr.push("", "NHẬN XÉT CỦA REVIEWER Ở LẦN VIẾT TRƯỚC, BẠN PHẢI SỬA CÁC ĐIỂM SAU:", carryGuidance);
     }
@@ -569,8 +571,15 @@ export async function generateStoryBlueprintWithBrowser(options: GenerateBluepri
       sessionId: options.writerSessionId,
       prompt: promptArr.join("\n"),
       newConversation: attempt === 0, // only new conversation on first attempt
-      timeoutMs: 15 * 60 * 1000,
+      timeoutMs: 30 * 60 * 1000,
     });
+
+    if (!options.reviewerApiKey?.trim()) {
+      options.onProgress?.(`Đang lọc sườn truyện bằng ChatGPT (Không dùng Reviewer)...`);
+      const bpRaw = await repairJsonWithBrowserWriter(options.writerSessionId, rawText);
+      finalJson = normalizeBlueprint(bpRaw, chapterCount);
+      break;
+    }
 
     options.onProgress?.(`Đang gửi sườn truyện cho Giám khảo (Reviewer API) đánh giá khả năng bám sát DNA...`);
 

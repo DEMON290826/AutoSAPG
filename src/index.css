@@ -1923,11 +1923,91 @@ body {
 .workspace-header {
   min-height: 70px;
   border-bottom: 1px solid var(--stroke);
-  padding: 10px 14px;
+  padding: 10px 24px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 20px;
+  background: linear-gradient(to right, #1a0d09, #120806);
+}
+
+.top-actions {
   display: flex;
   align-items: center;
   gap: 10px;
-  justify-content: space-between;
+  justify-self: end;
+}
+
+.app-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  user-select: none;
+}
+
+.app-logo .logo-image {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  box-shadow: 0 0 15px rgba(255, 138, 61, 0.3);
+  object-fit: cover;
+  border: 1px solid rgba(255, 138, 61, 0.2);
+}
+
+.app-logo h1 {
+  font-size: 18px;
+  font-weight: 800;
+  margin: 0;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, #fff 0%, #ff8a3d 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-logo h1 span {
+  font-size: 10px;
+  background: rgba(255, 138, 61, 0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+  -webkit-text-fill-color: #ff8a3d;
+  font-weight: 600;
+  border: 1px solid rgba(255, 138, 61, 0.3);
+}
+
+.gpt-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: 1px solid #444;
+  background: #222;
+  color: #aaa;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.gpt-toggle-btn.active {
+  border-color: #10a37f;
+  background: rgba(16, 163, 127, 0.1);
+  color: #10a37f;
+  box-shadow: 0 0 12px rgba(16, 163, 127, 0.2);
+}
+
+.gpt-toggle-btn:hover {
+  border-color: #666;
+  color: #eee;
+}
+
+.gpt-toggle-btn.active:hover {
+  border-color: #10a37f;
+  background: rgba(16, 163, 127, 0.2);
 }
 
 .product-nav {
@@ -3266,24 +3346,8 @@ body {
   padding: 10px;
 }
 
-body[data-theme="light"] {
-  --text: #111111;
-  --muted: #5d5d5d;
-  --stroke: #d8d8d8;
-  --body-background:
-    radial-gradient(80% 120% at 100% 0%, #f5f5f5 0%, transparent 58%),
-    radial-gradient(90% 100% at 0% 100%, #f2f2f2 0%, transparent 52%),
-    linear-gradient(170deg, #ffffff, #f8f8f8 42%, #f3f3f3 100%);
-  --scroll-track: #ebebeb;
-  --scroll-thumb: #b8b8b8;
-  --scroll-thumb-hover: #1f1f1f;
-}
+/* Theme forced to Dark Premium */
 
-body[data-theme="light"] .studio-frame {
-  background: linear-gradient(170deg, rgba(255, 255, 255, 0.97), rgba(247, 247, 247, 0.98));
-  border-color: #dddddd;
-  box-shadow: 0 20px 46px rgba(0, 0, 0, 0.08);
-}
 
 body[data-theme="light"] .app-boot-overlay {
   background:
@@ -3311,10 +3375,6 @@ body[data-theme="light"] .app-boot-progress {
   background: #f2f2f2;
 }
 
-body[data-theme="light"] .left-sidebar {
-  background: linear-gradient(180deg, #ffffff, #f8f8f8 58%, #f5f5f5);
-  border-right-color: #dfdfdf;
-}
 
 body[data-theme="light"] .workspace-header {
   border-bottom-color: #e1e1e1;

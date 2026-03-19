@@ -27,17 +27,16 @@ async def get_assistant_text():
         
         // Remove reasoning/thought blocks so we only get the real text
         const clone = lastNode.cloneNode(true);
-        const thoughts = clone.querySelectorAll('.mt-5.mb-2, details'); 
+        const thoughts = clone.querySelectorAll('.mt-5.mb-2, details, .thought-block, .reasoning-block, [class*="thought"], [class*="reasoning"]'); 
         thoughts.forEach(t => t.remove());
         
+        // Clean up some common artifacts
         return clone.innerText.trim();
     })();
     """
     try:
         result = await page.evaluate(script)
-        if result is None:
-            return ""
-        return str(result).strip()
+        return str(result or "").strip()
     except Exception as e:
         log(f"Error getting text: {e}")
         return ""
@@ -259,44 +258,95 @@ async def get_response():
     if not page: return {"error": "Trình duyệt chưa khởi chạy."}
     
     try:
-        # Check if still generating (stop button exists)
+        # Check if stop button is present (means still generating)
         generating = False
         stop_selectors = [
             "button[data-testid='stop-button']", 
-            "button[aria-label*='Stop']",
-            "button.bg-black[aria-label]" # Generic button that might be the stop one 
+            "button[aria-label*='Stop']"
         ]
         for sel in stop_selectors:
             try:
-                btn = await page.select(sel, timeout=0.1)
+                # Use querySelector directly for speed
+                btn = await page.evaluate(f"document.querySelector('{sel}') !== null")
                 if btn:
                     generating = True
                     break
-            except:
-                pass
+            except: pass
                 
+        # Check for technical errors in the UI
+        error_script = """
+        (() => {
+            const errorTexts = [
+                "Luồng stream bị gián đoạn",
+                "There was an error generating",
+                "Something went wrong",
+                "Failed to fetch",
+                "error in providing a response",
+                "vấn đề khi xử lý văn bản",
+                "tin nhắn đầy đủ"
+            ];
+            
+            // Check for specific error banners or blocks
+            const nodes = document.querySelectorAll('.text-red-500, .bg-red-500, .bg-token-main-surface-tertiary, .bg-gray-50, [class*="error"]');
+            for (let node of nodes) {
+                const text = node.innerText;
+                if (errorTexts.some(t => text.includes(t))) {
+                    return text.trim();
+                }
+            }
+            return "";
+        })()
+        """
+        detected_error = await page.evaluate(error_script)
+        if detected_error:
+            log(f"Detected ChatGPT error: {detected_error}")
+            return {"status": "error_retryable", "error": detected_error}
+
         curr_text = await get_assistant_text()
         
-        # If we see the 'regenerate' button or 'continue' button, it might mean it's done or stuck
-        is_done_button = False
-        for sel in ["button[data-testid='regenerate-button']", "button[data-testid='fruit-juice-send-button']"]:
+        # Check for send button (means done and ready for next)
+        is_ready = False
+        send_selectors = [
+            "button[data-testid='send-button']",
+            "button[data-testid='fruit-juice-send-button']",
+            "button[aria-label*='Send']"
+        ]
+        for sel in send_selectors:
             try:
-                if await page.select(sel, timeout=0.1): 
-                    is_done_button = True
+                # Check for presence and enabled state
+                ready_check = f"""
+                (() => {{
+                    const btn = document.querySelector('{sel}');
+                    return !!(btn && !btn.disabled);
+                }})()
+                """
+                if await page.evaluate(ready_check):
+                    is_ready = True
                     break
             except: pass
 
-        if (awaiting_new_response or True) and curr_text:
-            # If generating, keep waiting unless text stopped changing for a long time
-            if generating:
-                return {"status": "generating", "text": curr_text}
-            
-            # If not generating and we have text, and we were waiting or it just appeared different
-            if curr_text != last_response_text or is_done_button:
-                awaiting_new_response = False
-                last_response_text = curr_text
-                return {"status": "completed", "text": curr_text}
-            
+        # Consider it done if:
+        # 1. No stop button AND send button is back
+        # 2. OR we have solid text and it's been idle (not implemented yet, but is_ready usually suffices)
+        
+        is_completed = not generating and is_ready
+        
+        if curr_text:
+            if awaiting_new_response:
+                if is_completed:
+                    awaiting_new_response = False
+                    last_response_text = curr_text
+                    return {"status": "completed", "text": curr_text}
+                
+                # If still generating or stop button present
+                if generating or not is_ready:
+                    return {"status": "generating", "text": curr_text}
+            else:
+                # Safety check: if text changed significantly and we are ready
+                if curr_text != last_response_text and is_completed:
+                    last_response_text = curr_text
+                    return {"status": "completed", "text": curr_text}
+
         return {"status": "waiting"}
     except Exception as e:
         log(f"Lỗi get_response: {e}")

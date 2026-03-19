@@ -1,7 +1,7 @@
 {
   "name": "autosapg",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.15",
   "description": "AutoSAPG desktop app",
   "author": "doran",
   "repository": {
@@ -62,8 +62,8 @@
       "icon": "build/icons/app-icon.ico"
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "AutoSAPG",

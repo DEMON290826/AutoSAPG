@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { canUseElectronBridge, closeBrowserAllSessions, listenUpdateStatus, getBrowserWriterSessionCount, startBrowserWriterSession, closeBrowserWriterSession } from "./utils/electronBridge";
-import { AudioLines, Bell, BookOpenText, Bot, BrainCircuit, LayoutDashboard, LoaderCircle, ServerCog, SlidersHorizontal, Sparkles, WandSparkles } from "lucide-react";
+import { canUseElectronBridge, closeBrowserAllSessions, listenUpdateStatus, triggerUpdateCheck, getBrowserWriterSessionCount, startBrowserWriterSession, closeBrowserWriterSession } from "./utils/electronBridge";
+import { AudioLines, Bell, BookOpenText, Bot, BrainCircuit, LayoutDashboard, LoaderCircle, ServerCog, SlidersHorizontal, Sparkles, WandSparkles, RefreshCw } from "lucide-react";
 import { testBeeModelConnection } from "./dna/modelApi";
 import { DEFAULT_STORY_FACTORS, normalizeStoryFactors } from "./dna/storyFactors";
 import type { StoryFactorDefinition } from "./dna/storyFactors";
@@ -160,6 +160,8 @@ const DEFAULT_SETTINGS: AppSettingsState = {
   useStoryReviewer: true,
   maxRetries: 3,
   retryDelay: 30000,
+  dnaSystemPrompt: "",
+  storySystemPrompt: "",
 };
 
 function normalizeSettings(raw: Record<string, unknown>): AppSettingsState {
@@ -195,6 +197,8 @@ function normalizeSettings(raw: Record<string, unknown>): AppSettingsState {
     useStoryReviewer: raw.useStoryReviewer !== undefined ? Boolean(raw.useStoryReviewer) : DEFAULT_SETTINGS.useStoryReviewer,
     maxRetries,
     retryDelay,
+    dnaSystemPrompt: String(raw.dnaSystemPrompt ?? "").trim(),
+    storySystemPrompt: String(raw.storySystemPrompt ?? "").trim(),
   };
 }
 
@@ -202,10 +206,7 @@ export default function App() {
   const [isBooting, setIsBooting] = useState(true);
   const [activeSessionCount, setActiveSessionCount] = useState(0);
   const [updateStatus, setUpdateStatus] = useState("");
-  const [theme, setTheme] = useState<AppTheme>(() => {
-    const value = readJsonStorage<string>("app.theme", "dark");
-    return value === "light" ? "light" : "dark";
-  });
+  const [theme, setTheme] = useState<AppTheme>("dark");
   const [activeProduct, setActiveProduct] = useState<ProductTab>(() => {
     const value = readJsonStorage<string>("app.activeProduct", "autoStories");
     return ["autoStories", "autoGrok", "autoPrompt", "autoAudio"].includes(value) ? (value as ProductTab) : "autoStories";
@@ -725,8 +726,8 @@ export default function App() {
               <img className="brand-logo-image" src={appLogo} alt="AutoRun logo" loading="eager" />
             </div>
             <div>
-              <p className="brand-name">AutoRun</p>
-              <p className="brand-sub">Story DNA Studio 1.0.2</p>
+              <p className="brand-name">AutoSAPG</p>
+              <p className="brand-sub">Story DNA Studio 1.0.14</p>
             </div>
           </div>
 
@@ -759,8 +760,17 @@ export default function App() {
             <div className="app-logo">
               <img src={appLogo} alt="AutoSAPG Logo" className="logo-image" style={{ width: "24px", height: "24px", borderRadius: "4px" }} />
               <h1>
-                AutoSAPG <span>v1.0.2</span>
+                AutoSAPG <span>v1.0.14</span>
               </h1>
+              <button 
+                type="button" 
+                onClick={triggerUpdateCheck} 
+                className="update-check-btn tooltip-trigger" 
+                title="Kiểm tra cập nhật phần mềm"
+                style={{ background: "transparent", border: "none", color: "var(--text-3)", cursor: "pointer", marginLeft: "4px", padding: 0 }}
+              >
+                 <RefreshCw size={14} />
+              </button>
               {updateStatus && <div className="update-badge">{updateStatus}</div>}
             </div>
             <div className="product-nav">
@@ -784,7 +794,7 @@ export default function App() {
               )}
               <div className={`api-status-badge ${apiStatusClass}`} style={{ minWidth: "100px" }}>
                 <span className="api-status-dot" />
-                <span>{apiHealth.status === "ok" ? "API OK" : apiHealth.status === "error" ? "API Lỗi" : apiHealth.status === "testing" ? "Đang Test" : "Chờ Test"}</span>
+                <span>{apiHealth.status === "ok" ? "HỆ THỐNG OK" : apiHealth.status === "error" ? "HỆ THỐNG Lỗi" : apiHealth.status === "testing" ? "Đang Test" : "Chờ Test"}</span>
               </div>
               <button type="button" className="icon-square" aria-label="Thông báo">
                 {isTestingModel ? <LoaderCircle size={16} className="spin" /> : <Bell size={16} />}
@@ -855,7 +865,13 @@ export default function App() {
               </div>
 
               <div className={`stories-panel ${activeStoriesTab === "quanLyDna" ? "" : "pane-hidden"}`}>
-                {activeStoriesTab === "quanLyDna" ? <DnaManagementView manualEntries={manualEntries} setManualEntries={setManualEntries} /> : null}
+                {activeStoriesTab === "quanLyDna" ? (
+                  <DnaManagementView 
+                    manualEntries={manualEntries} 
+                    setManualEntries={setManualEntries} 
+                    dnaStoragePath={settings.dnaStoragePath}
+                  />
+                ) : null}
               </div>
             </section>
           </section>
