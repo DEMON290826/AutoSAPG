@@ -726,7 +726,7 @@ export default function App() {
             </div>
             <div>
               <p className="brand-name">AutoRun</p>
-              <p className="brand-sub">Story DNA Studio 1.0.0</p>
+              <p className="brand-sub">Story DNA Studio 1.0.1</p>
             </div>
           </div>
 
@@ -759,7 +759,7 @@ export default function App() {
             <div className="app-logo">
               <Sparkles size={24} className="logo-icon" />
               <h1>
-                AutoSAPG <span>v1.0.0</span>
+                AutoSAPG <span>v1.0.1</span>
               </h1>
               {updateStatus && <div className="update-badge">{updateStatus}</div>}
             </div>

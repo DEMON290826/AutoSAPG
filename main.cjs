@@ -379,7 +379,7 @@ function createWindow() {
     y: initialState.y,
     minWidth: 1280,
     minHeight: 720,
-    title: "AutoSAPG - v1.0.0",
+    title: "AutoSAPG - v1.0.1",
     icon: iconPath,
     autoHideMenuBar: true,
     show: false,
