@@ -726,7 +726,7 @@ export default function App() {
             </div>
             <div>
               <p className="brand-name">AutoRun</p>
-              <p className="brand-sub">Story DNA Studio 1.0.1</p>
+              <p className="brand-sub">Story DNA Studio 1.0.2</p>
             </div>
           </div>
 
@@ -757,9 +757,9 @@ export default function App() {
         <section className="workspace">
           <header className="workspace-header">
             <div className="app-logo">
-              <Sparkles size={24} className="logo-icon" />
+              <img src={appLogo} alt="AutoSAPG Logo" className="logo-image" style={{ width: "24px", height: "24px", borderRadius: "4px" }} />
               <h1>
-                AutoSAPG <span>v1.0.1</span>
+                AutoSAPG <span>v1.0.2</span>
               </h1>
               {updateStatus && <div className="update-badge">{updateStatus}</div>}
             </div>
