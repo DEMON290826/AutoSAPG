@@ -760,7 +760,7 @@ export default function App() {
             <div className="app-logo">
               <img src={appLogo} alt="AutoSAPG Logo" className="logo-image" style={{ width: "24px", height: "24px", borderRadius: "4px" }} />
               <h1>
-                AutoSAPG <span>v1.0.14</span>
+                AutoSAPG <span>v1.0.15</span>
               </h1>
               <button 
                 type="button" 
