@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { canUseElectronBridge, closeBrowserAllSessions, listenUpdateStatus, getBrowserWriterSessionCount } from "./utils/electronBridge";
+import { canUseElectronBridge, closeBrowserAllSessions, listenUpdateStatus, getBrowserWriterSessionCount, startBrowserWriterSession, closeBrowserWriterSession } from "./utils/electronBridge";
 import { AudioLines, Bell, BookOpenText, Bot, BrainCircuit, LayoutDashboard, LoaderCircle, ServerCog, SlidersHorizontal, Sparkles, WandSparkles } from "lucide-react";
 import { testBeeModelConnection } from "./dna/modelApi";
 import { DEFAULT_STORY_FACTORS, normalizeStoryFactors } from "./dna/storyFactors";
@@ -755,7 +755,7 @@ export default function App() {
         </aside>
 
         <section className="workspace">
-          <header className="app-header">
+          <header className="workspace-header">
             <div className="app-logo">
               <Sparkles size={24} className="logo-icon" />
               <h1>
@@ -782,9 +782,9 @@ export default function App() {
                   <span>Chrome: {activeSessionCount}</span>
                 </div>
               )}
-              <div className={`api-status-badge ${apiStatusClass}`}>
+              <div className={`api-status-badge ${apiStatusClass}`} style={{ minWidth: "100px" }}>
                 <span className="api-status-dot" />
-                <span>{apiHealth.status === "ok" ? "API OK" : apiHealth.status === "error" ? "API Lỗi" : "API..."}</span>
+                <span>{apiHealth.status === "ok" ? "API OK" : apiHealth.status === "error" ? "API Lỗi" : apiHealth.status === "testing" ? "Đang Test" : "Chờ Test"}</span>
               </div>
               <button type="button" className="icon-square" aria-label="Thông báo">
                 {isTestingModel ? <LoaderCircle size={16} className="spin" /> : <Bell size={16} />}

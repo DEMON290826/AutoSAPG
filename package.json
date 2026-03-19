@@ -79,7 +79,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "doran",
+        "owner": "DEMON290826",
         "repo": "AutoSAPG",
         "releaseType": "release"
       }
