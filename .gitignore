@@ -1,0 +1,15 @@
+node_modules/
+build/
+dist/
+release/
+release-builds/
+out/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+*.exe
+*.zip
+*.dmg
+*.AppImage

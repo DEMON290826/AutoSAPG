@@ -1,0 +1,22 @@
+﻿src/views/StoryBlueprintView.tsx(3,55): error TS2307: Cannot find module '../dna/blueprintStorage' or its corresponding type declarations.
+src/views/StoryBlueprintView.tsx(7,3): error TS2305: Module '"../dna/storyWriterApi"' has no exported member 'generateStoryBlueprintWithBrowser'.
+src/views/StoryBlueprintView.tsx(13,8): error TS2305: Module '"../dna/storyWriterApi"' has no exported member 'BlueprintDnaSource'.
+src/views/StoryBlueprintView.tsx(14,8): error TS2459: Module '"../dna/storyWriterApi"' declares 'StoryBlueprintResult' locally, but it is not exported.
+src/views/StoryBlueprintView.tsx(424,25): error TS2304: Cannot find name 'getSortedCategoryKeys'.
+src/views/StoryBlueprintView.tsx(424,74): error TS2304: Cannot find name 'loadCategoryEntries'.
+src/views/StoryBlueprintView.tsx(822,12): error TS2304: Cannot find name 'CustomSelect'.
+src/views/StoryBlueprintView.tsx(832,12): error TS2304: Cannot find name 'CustomSelect'.
+src/views/StoryBlueprintView.tsx(843,12): error TS2304: Cannot find name 'CustomSelect'.
+src/views/StoryBlueprintView.tsx(853,12): error TS2304: Cannot find name 'CustomSelect'.
+src/views/StoryBlueprintView.tsx(883,16): error TS2304: Cannot find name 'Settings2'.
+src/views/StoryBlueprintView.tsx(887,16): error TS2304: Cannot find name 'Plus'.
+src/views/StoryBlueprintView.tsx(897,32): error TS2304: Cannot find name 'LoaderCircle'.
+src/views/StoryBlueprintView.tsx(897,78): error TS2304: Cannot find name 'Sparkles'.
+src/views/StoryBlueprintView.tsx(923,26): error TS2304: Cannot find name 'Database'.
+src/views/StoryBlueprintView.tsx(1006,18): error TS2304: Cannot find name 'FolderOpen'.
+src/views/StoryBlueprintView.tsx(1022,18): error TS2304: Cannot find name 'X'.
+src/views/StoryBlueprintView.tsx(1041,18): error TS2304: Cannot find name 'X'.
+src/views/StoryBlueprintView.tsx(1051,22): error TS2304: Cannot find name 'CustomSelect'.
+src/views/StoryBlueprintView.tsx(1061,22): error TS2304: Cannot find name 'CustomSelect'.
+src/views/StoryBlueprintView.tsx(1078,22): error TS2304: Cannot find name 'CustomSelect'.
+src/views/StoryBlueprintView.tsx(1088,22): error TS2304: Cannot find name 'CustomSelect'.
