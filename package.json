@@ -1,0 +1,95 @@
+{
+  "name": "autosapg",
+  "private": true,
+  "version": "2.0.6",
+  "description": "AutoSAPG - Auto Story & Prompt Generator",
+  "author": "doran",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DEMON290826/AutoSAPG.git"
+  },
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "electron:pack": "vite build && electron-builder --win nsis --config.win.signAndEditExecutable=false",
+    "electron:pack:portable": "vite build && electron-builder --win portable --config.win.signAndEditExecutable=false",
+    "electron:release:github": "vite build && electron-builder --win nsis --publish always --config.win.signAndEditExecutable=false"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "electron": "^41.0.3",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.4.0",
+    "vite": "^8.0.1",
+    "vite-plugin-electron": "^0.29.1",
+    "vite-plugin-electron-renderer": "^0.14.6"
+  },
+  "build": {
+    "appId": "com.doran.autosapg",
+    "productName": "AutoSAPG",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "python/**/*",
+      "!python/__pycache__/**",
+      "!python/temp_*.json"
+    ],
+    "extraResources": [
+      {
+        "from": "python",
+        "to": "python",
+        "filter": [
+          "**/*",
+          "!__pycache__/**",
+          "!temp_*.json"
+        ]
+      },
+      {
+        "from": "../Auto_GPT.py",
+        "to": "Auto_GPT.py"
+      },
+      {
+        "from": "public/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "AutoSAPG"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "DEMON290826",
+        "repo": "AutoSAPG",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
