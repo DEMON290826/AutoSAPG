@@ -135,6 +135,11 @@ function spawnPythonRunner(event, runnerPath, configPath, payload, options = {})
 
     const child = spawn(getPythonExe(options.pythonDir), [runnerPath, configPath], {
       windowsHide: true,
+      env: {
+        ...process.env,
+        PYTHONWARNINGS: 'ignore::ResourceWarning',
+        PYTHONUTF8: '1',
+      },
     })
     pyProcess = child
 

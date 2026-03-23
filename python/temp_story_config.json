@@ -2,9 +2,9 @@
   "cookie_file": "C:\\Users\\doran\\OneDrive\\Documents\\Auto_All\\chatgpt.com_24-02-2026.json",
   "output_dir": "C:\\Users\\doran\\OneDrive\\Documents\\Auto_All\\output\\ChatGPT_Stories",
   "json_list": [
-    "{\n  \"story_title\": \"Tín Hiệu Cuối Cùng Trên Chuyến Bay Mất Tích MH370\",\n  \"genre\": \"creepypasta_nosleep\",\n  \"styles\": [\n    \"dieu_tra\",\n    \"nhat_ky\",\n    \"hien_thuc_u_am\",\n    \"tin_hieu_cuc_am\"\n  ],\n  \"length_mode\": \"total_words\",\n  \"total_words\": 10000,\n  \"avg_words_per_chapter\": 5000,\n  \"story_language\": \"tiếng Việt\",\n  \"character_name_language\": \"English\",\n  \"target_intensity\": \"cao\",\n  \"ending_type\": \"du_am_bat_an\",\n  \"additional_settings\": {}\n}"
+    "{\n  \"story_title\": \"Tín Hiệu Cuối Cùng Trên Chuyến Bay Mất Tích MH370 1\",\n  \"genre\": \"creepypasta_nosleep\",\n  \"styles\": [\n    \"dieu_tra\",\n    \"nhat_ky\",\n    \"hien_thuc_u_am\",\n    \"tin_hieu_cuc_am\"\n  ],\n  \"length_mode\": \"total_words\",\n  \"total_words\": 10000,\n  \"avg_words_per_chapter\": 5000,\n  \"story_language\": \"tiếng Việt\",\n  \"character_name_language\": \"English\",\n  \"target_intensity\": \"cao\",\n  \"ending_type\": \"du_am_bat_an\",\n  \"additional_settings\": {}\n}"
   ],
   "max_threads": 2,
-  "outline_prompt": "Đây là thông tin JSON truyện. Hãy tạo cho tôi một dàn ý chi tiết bám sát JSON này:\n{json_data}",
-  "chapter_prompt": "Dựa vào dàn ý trên và JSON, hãy viết chi tiết {chapter_name}."
+  "outline_prompt": "Đây là thông tin JSON truyện. Hãy tạo cho tôi một dàn ý chi tiết bám sát JSON này:\n{json_data}. viết ngắn gọn đầy đủ",
+  "chapter_prompt": "Dựa vào dàn ý trên và JSON, hãy viết chi tiết {chapter_name}. Viết chuẩn theo {avg_words_per_chapter} ký tự"
 }
