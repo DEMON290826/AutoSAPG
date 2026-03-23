@@ -310,13 +310,23 @@ async def process_story(
             if not chapter_reply:
                 chapter_reply = f"[{chapter_name} - không lấy được sau 2 lần retry]"
 
-            # Save chapter
+            # Strip bất kỳ dòng tiêu đề markdown nào AI tự thêm (# ## ###)
+            def strip_headers(text: str) -> str:
+                lines = text.splitlines()
+                # Bỏ dòng đầu nếu là heading (bắt đầu bằng #)
+                while lines and lines[0].strip().startswith('#'):
+                    lines.pop(0)
+                # Bỏ dòng trống đầu còn lại
+                while lines and not lines[0].strip():
+                    lines.pop(0)
+                return '\n'.join(lines).strip()
+
+            clean_reply = strip_headers(chapter_reply)
+
+            # Save chapter — chỉ nội dung thuần, không có tiêu đề
             ch_file = story_dir / f"{ch_idx+1:02d}_{safe_filename(chapter_name)}.txt"
-            ch_file.write_text(
-                f"# {chapter_name}\n\n{chapter_reply}\n",
-                encoding="utf-8"
-            )
-            emit_log(f"[Truyện {story_idx+1}] {chapter_name} ({len(chapter_reply)} chars) → {ch_file.name}")
+            ch_file.write_text(clean_reply + "\n", encoding="utf-8")
+            emit_log(f"[Truyện {story_idx+1}] {chapter_name} ({len(clean_reply)} chars) → {ch_file.name}")
 
         # ── Step 3: Ghép chỉ các CHƯƠNG thành 1 file đầy đủ ──
         # Lấy tên truyện từ JSON đầu vào (không dùng outline)
