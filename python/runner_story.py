@@ -318,9 +318,17 @@ async def process_story(
             )
             emit_log(f"[Truyện {story_idx+1}] {chapter_name} ({len(chapter_reply)} chars) → {ch_file.name}")
 
-        # ── Step 3: Ghép tất cả chương thành 1 file .txt đầy đủ ──
-        full_text_parts = [title, ""]  # Dòng đầu tiên = tên truyện, dòng trống
-        chapter_files = sorted(story_dir.glob("[0-9]*_*.txt"))
+        # ── Step 3: Ghép chỉ các CHƯƠNG thành 1 file đầy đủ ──
+        # Lấy tên truyện từ JSON đầu vào (không dùng outline)
+        story_title = story_json.get("title", title)
+
+        # Chỉ lấy file chương (01_, 02_...), bỏ qua 00_outline.txt
+        chapter_files = sorted(
+            cf for cf in story_dir.glob("[0-9]*_*.txt")
+            if not cf.name.startswith("00_")
+        )
+
+        full_text_parts = [story_title, ""]  # Dòng đầu = tên truyện, dòng trống
         for cf in chapter_files:
             try:
                 content = cf.read_text(encoding="utf-8").strip()
@@ -331,7 +339,7 @@ async def process_story(
 
         full_path = story_dir / f"{safe_title}_full.txt"
         full_path.write_text("\n".join(full_text_parts), encoding="utf-8")
-        emit_log(f"[Truyện {story_idx+1}] Đã tạo file đầy đủ: {full_path.name}")
+        emit_log(f"[Truyện {story_idx+1}] Đã tạo file đầy đủ ({len(chapter_files)} chương): {full_path.name}")
 
         emit_story_update(story_idx, f"✅ Hoàn thành ({len(chapters)} phần)")
         emit_log(f"[Truyện {story_idx+1}] '{title}' hoàn thành!")
