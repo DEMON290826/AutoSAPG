@@ -37,19 +37,25 @@ except Exception:
 def _find_auto_gpt_root() -> Path:
     """
     Search order:
-    1. Same dir as runner_story.py  (packaged: resources/python/ -> resources/)
-    2. Next to python exe           (packaged: resources/Auto_GPT.py)
-    3. Dev: Auto_All/               (grandparent of chatgpt-sender-ui/python/)
+    1. Same folder as runner_story.py      <- user puts Auto_GPT.py here (most common)
+    2. Parent folder                       <- packaged: resources/
+    3. Next to python.exe                  <- packaged alternative
+    4. Dev: 3 levels up (Auto_All/)        <- dev mode
     """
     candidates = [
-        Path(__file__).resolve().parent.parent,          # resources/
-        Path(sys.executable).parent,                     # next to python.exe
-        Path(__file__).resolve().parent.parent.parent,   # dev: Auto_All/
+        Path(__file__).resolve().parent,               # same dir as runner_story.py
+        Path(__file__).resolve().parent.parent,        # resources/ (packaged)
+        Path(sys.executable).parent,                   # next to python.exe
+        Path(__file__).resolve().parent.parent.parent, # dev: Auto_All/
     ]
     for c in candidates:
         if (c / "Auto_GPT.py").exists():
             return c
-    return candidates[-1]
+    checked = ', '.join(str(c) for c in candidates)
+    print(json.dumps({"type": "error",
+        "message": f"Auto_GPT.py not found! Checked: {checked}. "
+                   f"Please put Auto_GPT.py in the same folder as runner_story.py"}))
+    return candidates[0]
 
 ROOT = _find_auto_gpt_root()
 sys.path.insert(0, str(ROOT))
