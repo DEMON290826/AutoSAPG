@@ -268,6 +268,7 @@ async def run(config: dict):
                     max_wait_sec=PROMPT_TIMEOUT_SEC,
                     max_retries=2,
                     log_fn=lambda msg: emit_log(f"[Khung {worker_id+1}]{msg}"),
+                    post_reload_fn=lambda: tab.evaluate(fp_script),
                 )
 
                 if not final_reply:

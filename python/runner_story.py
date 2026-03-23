@@ -173,6 +173,12 @@ async def process_story(
     cache_dir = None
     try:
         fp = generate_fingerprint(seed=worker_id + story_idx * 100)
+        emit_log(
+            f"[Truyện {story_idx+1}] Đang mở trình duyệt... "
+            f"(Chrome/{fp['chrome_version']}, "
+            f"GPU: {fp['webgl_renderer'][:35]}..., "
+            f"Screen: {fp['screen_width']}x{fp['screen_height']})"
+        )
         cache_dir = tempfile.mkdtemp(prefix=f'uc_story_{worker_id}_')
         browser = await uc.start(
             headless=False,
@@ -256,6 +262,7 @@ async def process_story(
             max_wait_sec=PROMPT_TIMEOUT_SEC,
             max_retries=2,
             log_fn=lambda msg: emit_log(f"[Truyện {story_idx+1}]{msg}"),
+            post_reload_fn=lambda: tab.evaluate(fp_script),
         )
 
         if not outline_reply:
@@ -297,6 +304,7 @@ async def process_story(
                 max_wait_sec=PROMPT_TIMEOUT_SEC,
                 max_retries=2,
                 log_fn=lambda msg: emit_log(f"[Truyện {story_idx+1}]{msg}"),
+                post_reload_fn=lambda: tab.evaluate(fp_script),
             )
 
             if not chapter_reply:
