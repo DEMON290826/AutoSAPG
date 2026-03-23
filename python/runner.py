@@ -327,6 +327,15 @@ async def run(config: dict):
 # Entry point
 # ---------------------------------------------------------------------------
 def main():
+    import warnings
+    # Suppress ResourceWarning from asyncio ProactorEventLoop on Windows
+    # (unclosed transport warnings are cosmetic — pipes are already dead)
+    warnings.filterwarnings(
+        "ignore",
+        message="unclosed transport",
+        category=ResourceWarning,
+    )
+
     if len(sys.argv) < 2:
         emit_error("Usage: python runner.py <config.json>")
         sys.exit(1)
@@ -345,7 +354,7 @@ def main():
     except Exception:
         emit_error(traceback.format_exc())
     finally:
-        # Cancel all pending tasks to avoid 'Task was destroyed' warnings
+        # Cancel all pending tasks
         try:
             pending = asyncio.all_tasks(loop)
             for task in pending:
@@ -354,8 +363,17 @@ def main():
                 loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         except Exception:
             pass
+        # Flush remaining proactor callbacks
+        try:
+            loop.run_until_complete(asyncio.sleep(0.25))
+        except Exception:
+            pass
         try:
             loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:
+            pass
+        try:
+            loop.run_until_complete(loop.shutdown_default_executor())
         except Exception:
             pass
         loop.close()

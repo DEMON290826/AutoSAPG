@@ -444,6 +444,13 @@ async def run(config: dict):
 # Entry point
 # ---------------------------------------------------------------------------
 def main():
+    import warnings
+    warnings.filterwarnings(
+        "ignore",
+        message="unclosed transport",
+        category=ResourceWarning,
+    )
+
     if len(sys.argv) < 2:
         emit_error("Usage: python runner_story.py <config.json>")
         sys.exit(1)
@@ -471,7 +478,15 @@ def main():
         except Exception:
             pass
         try:
+            loop.run_until_complete(asyncio.sleep(0.25))
+        except Exception:
+            pass
+        try:
             loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:
+            pass
+        try:
+            loop.run_until_complete(loop.shutdown_default_executor())
         except Exception:
             pass
         loop.close()
