@@ -102,6 +102,7 @@ function TestModule({ addLog }) {
             promptsByFrame: prompts.map((p) => splitPrompts(p)),
             pythonDir: localStorage.getItem('settings_python_dir') || '',
             scriptsDir: localStorage.getItem('settings_scripts_dir') || '',
+            sitePkgDir: localStorage.getItem('settings_site_pkg_dir') || '',
         };
         const result = await window.electronAPI.startAutomation(payload);
         

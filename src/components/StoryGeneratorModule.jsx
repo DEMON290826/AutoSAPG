@@ -288,6 +288,7 @@ function StoryGeneratorModule() {
             chapterPrompt: finalChapterPrompt,
             pythonDir: localStorage.getItem('settings_python_dir') || '',
             scriptsDir: localStorage.getItem('settings_scripts_dir') || '',
+            sitePkgDir: localStorage.getItem('settings_site_pkg_dir') || '',
         };
         const result = await window.electronAPI.startStoryAutomation(payload);
         if(!result.success) {

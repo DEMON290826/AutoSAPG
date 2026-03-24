@@ -139,6 +139,13 @@ function spawnPythonRunner(event, runnerPath, configPath, payload, options = {})
         ...process.env,
         PYTHONWARNINGS: 'ignore::ResourceWarning',
         PYTHONUTF8: '1',
+        // Merge user-specified site-packages dir into PYTHONPATH
+        ...(options.sitePkgDir && options.sitePkgDir.trim() ? {
+          PYTHONPATH: [
+            options.sitePkgDir.trim(),
+            process.env.PYTHONPATH || ''
+          ].filter(Boolean).join(';')
+        } : {})
       },
     })
     pyProcess = child
@@ -269,7 +276,8 @@ ipcMain.handle('start-automation', async (event, config) => {
   }
 
   return spawnPythonRunner(event, runnerPath, configPath, payload, {
-    pythonDir: config.pythonDir
+    pythonDir: config.pythonDir,
+    sitePkgDir: config.sitePkgDir,
   })
 })
 
@@ -294,7 +302,8 @@ ipcMain.handle('start-story-automation', async (event, config) => {
 
   return spawnPythonRunner(event, runnerPath, configPath, payload, {
     enableStoryUpdates: true,
-    pythonDir: config.pythonDir
+    pythonDir: config.pythonDir,
+    sitePkgDir: config.sitePkgDir,
   })
 })
 

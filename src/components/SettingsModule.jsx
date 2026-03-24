@@ -31,6 +31,9 @@ function SettingsModule({ addLog }) {
   const [scriptsDir, setScriptsDir] = useState(
     () => normalizePath(localStorage.getItem('settings_scripts_dir')) || ''
   );
+  const [sitePkgDir, setSitePkgDir] = useState(
+    () => normalizePath(localStorage.getItem('settings_site_pkg_dir')) || ''
+  );
   const [installing, setInstalling] = useState(false);
   const [installStatus, setInstallStatus] = useState('');
 
@@ -38,6 +41,7 @@ function SettingsModule({ addLog }) {
   useEffect(() => {
     localStorage.setItem('settings_python_dir', pythonDir);
     localStorage.setItem('settings_scripts_dir', scriptsDir);
+    localStorage.setItem('settings_site_pkg_dir', sitePkgDir);
     localStorage.setItem('settings_cookie', cookieFile);
     localStorage.setItem('settings_test_output', testOutputDir);
     localStorage.setItem('settings_story_output', storyOutputDir);
@@ -47,7 +51,14 @@ function SettingsModule({ addLog }) {
     localStorage.setItem('story_cookie', cookieFile);
     localStorage.setItem('story_output', storyOutputDir);
     localStorage.setItem('python_dir', pythonDir);
-  }, [pythonDir, scriptsDir, cookieFile, testOutputDir, storyOutputDir]);
+  }, [pythonDir, scriptsDir, sitePkgDir, cookieFile, testOutputDir, storyOutputDir]);
+
+  const browseSitePkgDir = async () => {
+    if (window.electronAPI) {
+      const p = await window.electronAPI.browseDir();
+      if (p) setSitePkgDir(p);
+    }
+  };
 
   const browseScriptsDir = async () => {
     if (window.electronAPI) {
@@ -260,6 +271,36 @@ function SettingsModule({ addLog }) {
             ⚠️ Đường dẫn không có chữ "python" — kiểm tra lại!
           </div>
         )}
+      </div>
+
+      <div style={field}>
+        <span style={label}>Thư mục site-packages (chứa nodriver)</span>
+        <div style={row}>
+          <input
+            style={input}
+            value={sitePkgDir}
+            onChange={e => setSitePkgDir(e.target.value)}
+            placeholder="Để trống → dùng site-packages mặc định..."
+          />
+          <button style={btnSmall} onClick={browseSitePkgDir}>Chọn Thư Mục</button>
+          {sitePkgDir && (
+            <button
+              style={{...btnSmall, color: '#fca5a5', borderColor: 'rgba(239,68,68,0.3)'}}
+              onClick={() => setSitePkgDir('')}
+              title="Xóa"
+            >✕ Xóa</button>
+          )}
+        </div>
+        <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '2px' }}>
+          Điền khi nodriver báo thiếu dù đã cài. Ví dụ:{' '}
+          <code style={{background:'rgba(255,255,255,0.08)', padding:'1px 5px', borderRadius:'3px'}}>
+            C:\Python313\Lib\site-packages
+          </code>
+          {' '}hoặc{' '}
+          <code style={{background:'rgba(255,255,255,0.08)', padding:'1px 5px', borderRadius:'3px'}}>
+            C:\Users\admin\AppData\Roaming\Python\Python313\site-packages
+          </code>
+        </div>
       </div>
 
       <div style={{ 
